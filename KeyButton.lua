@@ -42,6 +42,12 @@ local function findKeyForSpell(spellID)
     return nil
 end
 
+local function applySavedPosition(self)
+    local db = addon.charDb
+    self:ClearAllPoints()
+    self:SetPoint("CENTER", UIParent, "CENTER", db.keyX or 240, db.keyY or -180)
+end
+
 KeyButton.FontList = {
     { file = "Fonts\\FRIZQT__.TTF", name = "Friz Quadrata" },
     { file = "Fonts\\ARIALN.TTF",   name = "Arial Narrow" },
@@ -100,12 +106,6 @@ function KeyButton.ResetAll()
     KeyButton.ResetPosition()
     KeyButton.ApplyLook()
     KeyButton.ApplyLock()
-end
-
-local function applySavedPosition(self)
-    local db = addon.charDb
-    self:ClearAllPoints()
-    self:SetPoint("CENTER", UIParent, "CENTER", db.keyX or 240, db.keyY or -180)
 end
 
 local function manualDragStart(self)

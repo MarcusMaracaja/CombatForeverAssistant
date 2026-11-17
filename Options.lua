@@ -147,10 +147,12 @@ end
 
 local function refreshTabButtons()
     local order = { "general", "key" }
+    local seen = { general = true, key = true, about = true }
     for id, tab in pairs(tabs) do
-        if id ~= "general" and id ~= "about" then
+        if not seen[id] then
             local _, playerClass = UnitClass("player")
             if not tab.classTag or tab.classTag == playerClass then
+                seen[id] = true
                 table.insert(order, id)
             end
         end
