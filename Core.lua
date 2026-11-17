@@ -19,6 +19,11 @@ local defaults = {
     borderWidth = 12,           -- px used by border mode
     keyButton = true,
     keyButtonLocked = false,
+    keySize = 46,
+    keyFont = "Fonts\\FRIZQT__.TTF",
+    keyBgColor = { 0.05, 0.05, 0.05 },
+    keyBgAlpha = 0.72,
+    keyTextColor = { 1.0, 0.9, 0.3 },
     warnOutdated = true,
     RotationEditor = {},
 }

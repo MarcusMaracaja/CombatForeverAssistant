@@ -54,7 +54,7 @@ local function createPanel()
     -- Drag strip (top bar) — the window moves by dragging it
     local drag = CreateFrame("Frame", nil, frame)
     drag:SetPoint("TOPLEFT", 0, 0)
-    drag:SetPoint("TOPRIGHT", 0, 0)
+    drag:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -52, 0) -- keep clear of the close X
     drag:SetHeight(34)
     drag:EnableMouse(true)
     drag:SetScript("OnMouseDown", function(self)
@@ -92,6 +92,7 @@ local function createPanel()
     close:SetWidth(26)
     close:SetHeight(26)
     close:SetPoint("TOPRIGHT", -8, -8)
+    close:SetFrameLevel(frame:GetFrameLevel() + 20)
     close.txt = close:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
     close.txt:SetPoint("CENTER", 0, 1)
     close.txt:SetText("X")
@@ -145,7 +146,7 @@ local function makeTabButton(id, index)
 end
 
 local function refreshTabButtons()
-    local order = { "general" }
+    local order = { "general", "key" }
     for id, tab in pairs(tabs) do
         if id ~= "general" and id ~= "about" then
             local _, playerClass = UnitClass("player")
@@ -211,6 +212,184 @@ function Options.Toggle()
         Options.SelectTab("general")
     end
     if frame:IsShown() then frame:Hide() else frame:Show() end
+end
+
+-- ---------------------------------------------------------------------------
+-- Key button tab
+-- ---------------------------------------------------------------------------
+local BG_SWATCHES = {
+    { 0.05, 0.05, 0.05 }, -- near-black (default)
+    { 0.00, 0.00, 0.00 }, -- black
+    { 0.12, 0.12, 0.12 }, -- gray
+    { 0.30, 0.06, 0.06 }, -- dark red
+    { 0.06, 0.28, 0.06 }, -- dark green
+    { 0.06, 0.08, 0.35 }, -- dark blue
+}
+
+local function eq3(a, b)
+    a, b = a or { 0, 0, 0 }, b or { 0, 0, 0 }
+    return math.abs((a[1] or 0) - (b[1] or 0)) < 0.01
+        and math.abs((a[2] or 0) - (b[2] or 0)) < 0.01
+        and math.abs((a[3] or 0) - (b[3] or 0)) < 0.01
+end
+
+function buildKeyButtonTab(parent)
+    local y = -8
+    local KB = addon.KeyButton
+
+    local function header(text)
+        local fs = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        fs:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
+        fs:SetTextColor(ORANGE[1], ORANGE[2], ORANGE[3], 1)
+        fs:SetText(text)
+        y = y - 22
+    end
+
+    local function makeSlider(minV, maxV, initial, onChange, fmt)
+        local slider = CreateFrame("Slider", nil, parent)
+        slider:SetOrientation("HORIZONTAL")
+        slider:SetMinMaxValues(minV, maxV)
+        slider:SetValueStep(1)
+        pcall(function() slider:SetObeyStepOnDrag(true) end)
+        slider:SetWidth(170)
+        slider:SetHeight(18)
+        slider:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
+
+        local track = slider:CreateTexture(nil, "BACKGROUND")
+        track:SetTexture("Interface\\Buttons\\WHITE8X8")
+        track:SetVertexColor(0.18, 0.18, 0.18, 0.95)
+        track:SetPoint("LEFT", slider, "LEFT", 0, 0)
+        track:SetPoint("RIGHT", slider, "RIGHT", 0, 0)
+        track:SetPoint("CENTER", slider, "CENTER", 0, 0)
+        track:SetHeight(6)
+
+        slider:SetThumbTexture("Interface\\Buttons\\WHITE8X8")
+        local thumb = slider:GetThumbTexture()
+        if thumb then
+            thumb:SetWidth(12)
+            thumb:SetHeight(18)
+            thumb:SetVertexColor(ORANGE[1], ORANGE[2], ORANGE[3], 1)
+        end
+
+        local valFS = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        valFS:SetPoint("LEFT", slider, "RIGHT", 8, 0)
+        valFS:SetTextColor(1, 0.9, 0.6, 1)
+        local function updateVal(v) valFS:SetText(fmt(math.floor(v))) end
+        slider:SetScript("OnValueChanged", function(self, v)
+            local w = math.floor(v)
+            onChange(w)
+            updateVal(w)
+        end)
+        slider:EnableMouseWheel(true)
+        slider:SetScript("OnMouseWheel", function(self, delta)
+            self:SetValue(math.max(minV, math.min(maxV, self:GetValue() + (delta > 0 and 1 or -1))))
+        end)
+        slider:SetValue(initial)
+        y = y - 34
+        return slider
+    end
+
+    local function swatchRow(colors, getRgb, setRgb)
+        local btns = {}
+        local function refresh()
+            local cur = getRgb()
+            for i, b in ipairs(btns) do
+                if eq3(cur, colors[i]) then b.sel:Show() else b.sel:Hide() end
+            end
+        end
+        for i, rgb in ipairs(colors) do
+            local b = CreateFrame("Button", nil, parent)
+            b:SetWidth(22)
+            b:SetHeight(22)
+            b:SetPoint("TOPLEFT", parent, "TOPLEFT", 6 + (i - 1) * 28, y)
+            b.sel = b:CreateTexture(nil, "BORDER")
+            b.sel:SetTexture("Interface\\Buttons\\WHITE8X8")
+            b.sel:SetVertexColor(1, 1, 1, 1)
+            b.sel:SetWidth(26)
+            b.sel:SetHeight(26)
+            b.sel:SetPoint("CENTER", b, "CENTER", 0, 0)
+            b.bg = b:CreateTexture(nil, "ARTWORK")
+            b.bg:SetTexture("Interface\\Buttons\\WHITE8X8")
+            b.bg:SetVertexColor(rgb[1], rgb[2], rgb[3], 1)
+            b.bg:SetWidth(22)
+            b.bg:SetHeight(22)
+            b.bg:SetPoint("CENTER", b, "CENTER", 0, 0)
+            b:SetScript("OnClick", function()
+                setRgb(rgb)
+                refresh()
+            end)
+            btns[i] = b
+        end
+        refresh()
+        y = y - 30
+        return refresh
+    end
+
+    -- Size
+    header(L["opt_key_size"] .. ":")
+    local sizeSlider = makeSlider(24, 128, addon.db.keySize or 46,
+        function(w) addon.db.keySize = w; KB.ApplyLook() end,
+        function(v) return tostring(v) .. " px" end)
+
+    -- Font
+    header(L["opt_key_font"] .. ":")
+    local fontBtn = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    fontBtn:SetWidth(230)
+    fontBtn:SetHeight(22)
+    fontBtn:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
+    fontBtn:SetText(KB.FontDisplayName(addon.db.keyFont))
+    fontBtn:SetScript("OnClick", function()
+        local list = KB.FontList
+        local idx = 1
+        for i, f in ipairs(list) do
+            if f.file == addon.db.keyFont then idx = i break end
+        end
+        idx = idx % #list + 1
+        addon.db.keyFont = list[idx].file
+        fontBtn:SetText(list[idx].name)
+        KB.ApplyLook()
+    end)
+    y = y - 30
+
+    -- Background color
+    header(L["opt_key_bg"] .. ":")
+    local refreshBg = swatchRow(BG_SWATCHES,
+        function() return addon.db.keyBgColor end,
+        function(rgb) addon.db.keyBgColor = { rgb[1], rgb[2], rgb[3] }; KB.ApplyLook() end)
+
+    -- Background transparency
+    header(L["opt_key_alpha"] .. ":")
+    local alphaSlider = makeSlider(0, 100, math.floor((addon.db.keyBgAlpha or 0.72) * 100),
+        function(v) addon.db.keyBgAlpha = v / 100; KB.ApplyLook() end,
+        function(v) return tostring(v) .. "%" end)
+
+    -- Text color
+    header(L["opt_key_text_color"] .. ":")
+    local refreshText = swatchRow(addon.Visuals.PresetColors,
+        function() return addon.db.keyTextColor end,
+        function(rgb) addon.db.keyTextColor = { rgb[1], rgb[2], rgb[3] }; KB.ApplyLook() end)
+
+    -- Hint
+    local hint = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    hint:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
+    hint:SetTextColor(0.65, 0.65, 0.65, 1)
+    hint:SetText(L["opt_key_hint"])
+    y = y - 20
+
+    -- Reset
+    local reset = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    reset:SetWidth(180)
+    reset:SetHeight(24)
+    reset:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
+    reset:SetText(L["opt_key_reset"])
+    reset:SetScript("OnClick", function()
+        KB.ResetAll()
+        sizeSlider:SetValue(addon.db.keySize)
+        fontBtn:SetText(KB.FontDisplayName(addon.db.keyFont))
+        alphaSlider:SetValue(math.floor(addon.db.keyBgAlpha * 100))
+        refreshBg()
+        refreshText()
+    end)
 end
 
 -- ---------------------------------------------------------------------------
@@ -439,4 +618,5 @@ end
 
 -- Register built-in tabs eagerly so class modules can rely on Options existing.
 Options.RegisterTab("general", L["opt_tab_general"], nil, buildGeneralTab)
+Options.RegisterTab("key", L["opt_tab_key"], nil, buildKeyButtonTab)
 Options.RegisterTab("about", L["opt_tab_about"], nil, buildAboutTab)

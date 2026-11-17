@@ -42,6 +42,66 @@ local function findKeyForSpell(spellID)
     return nil
 end
 
+KeyButton.FontList = {
+    { file = "Fonts\\FRIZQT__.TTF", name = "Friz Quadrata" },
+    { file = "Fonts\\ARIALN.TTF",   name = "Arial Narrow" },
+    { file = "Fonts\\MORPHEUS.TTF", name = "Morpheus" },
+    { file = "Fonts\\SKURRI.TTF",   name = "Skurri" },
+    { file = "Fonts\\2002.TTF",     name = "2002" },
+    { file = "Fonts\\2002B.TTF",    name = "2002 Bold" },
+}
+
+local DEFAULTS = {
+    keySize = 46,
+    keyFont = "Fonts\\FRIZQT__.TTF",
+    keyBgColor = { 0.05, 0.05, 0.05 },
+    keyBgAlpha = 0.72,
+    keyTextColor = { 1.0, 0.9, 0.3 },
+}
+KeyButton.Defaults = DEFAULTS
+
+function KeyButton.FontDisplayName(file)
+    for _, f in ipairs(KeyButton.FontList) do
+        if f.file == file then return f.name end
+    end
+    return (file and file:match("[^\\]+$")) or "?"
+end
+
+function KeyButton.ApplyLook()
+    local db = addon.db
+    if not frame then return end
+    local size = math.max(24, math.min(128, tonumber(db.keySize) or DEFAULTS.keySize))
+    frame:SetWidth(size)
+    frame:SetHeight(size)
+    local scale = size / DEFAULTS.keySize
+    frame.border:SetHeight(math.max(2, math.floor(2 * scale + 0.5)))
+    local textSize = math.max(12, math.floor(size * 0.42))
+    pcall(frame.text.SetFont, frame.text, db.keyFont or DEFAULTS.keyFont, textSize, "OUTLINE")
+    local tc = db.keyTextColor or DEFAULTS.keyTextColor
+    frame.text:SetTextColor(tc[1] or 1, tc[2] or 0.9, tc[3] or 0.3, 1)
+    local bg = db.keyBgColor or DEFAULTS.keyBgColor
+    local a = db.keyBgAlpha
+    if a == nil then a = DEFAULTS.keyBgAlpha end
+    frame.bg:SetVertexColor(bg[1] or 0.05, bg[2] or 0.05, bg[3] or 0.05, a)
+end
+
+function KeyButton.ResetPosition()
+    addon.charDb.keyX, addon.charDb.keyY = nil, nil
+    if frame then applySavedPosition(frame) end
+end
+
+function KeyButton.ResetAll()
+    local db = addon.db
+    db.keySize = DEFAULTS.keySize
+    db.keyFont = DEFAULTS.keyFont
+    db.keyBgColor = { DEFAULTS.keyBgColor[1], DEFAULTS.keyBgColor[2], DEFAULTS.keyBgColor[3] }
+    db.keyBgAlpha = DEFAULTS.keyBgAlpha
+    db.keyTextColor = { DEFAULTS.keyTextColor[1], DEFAULTS.keyTextColor[2], DEFAULTS.keyTextColor[3] }
+    KeyButton.ResetPosition()
+    KeyButton.ApplyLook()
+    KeyButton.ApplyLock()
+end
+
 local function applySavedPosition(self)
     local db = addon.charDb
     self:ClearAllPoints()
@@ -103,6 +163,7 @@ local function createFrame()
     frame:SetScript("OnUpdate", manualDragUpdate)
 
     applySavedPosition(frame)
+    KeyButton.ApplyLook()
     KeyButton.ApplyLock()
     return frame
 end
