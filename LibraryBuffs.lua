@@ -278,12 +278,20 @@ end
 BuffLib.entries = E
 BuffLib.FamilyMaxTier = familyMax
 
+-- WoW Forever (modern engine): UnitBuff/UnitDebuff's spellID is expected at return
+-- position 10 (retail-style). If that assumption is wrong, scanning finds nothing and
+-- BuffLib-gated suggestions silently no-op. Run in game to confirm:
+--   /dump select(10, UnitBuff("player", 1))
+-- (or dump all returns and see which position is the number that looks like a spellID)
+local SPELL_ID_POSITION = 10
+
 local function scan(unit, harvest)
     local i = 1
     while true do
-        local name, rank, _, _, _, _, _, _, _, spellID = UnitBuff(unit, i)
+        local returns = { UnitBuff(unit, i) }
+        local name = returns[1]
         if not name then break end
-        spellID = tonumber(spellID)
+        local spellID = tonumber(returns[SPELL_ID_POSITION])
         if spellID and bySpellID[spellID] then
             local hit = bySpellID[spellID]
             harvest(hit.entryIndex, hit.tier, spellID)
@@ -292,9 +300,10 @@ local function scan(unit, harvest)
     end
     i = 1
     while true do
-        local name, rank, _, _, _, _, _, _, _, spellID = UnitDebuff(unit, i)
+        local returns = { UnitDebuff(unit, i) }
+        local name = returns[1]
         if not name then break end
-        spellID = tonumber(spellID)
+        local spellID = tonumber(returns[SPELL_ID_POSITION])
         if spellID and bySpellID[spellID] then
             local hit = bySpellID[spellID]
             harvest(hit.entryIndex, hit.tier, spellID)

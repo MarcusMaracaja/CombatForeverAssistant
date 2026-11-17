@@ -102,48 +102,82 @@ frame:SetScript("OnUpdate", function(_, delta)
 end)
 
 -- ---------------------------------------------------------------------------
--- Outdated-rank warning (chat, at login)
+-- Compat layer (modern engine: globals may have moved into C_Spell / C_SpellBook)
+-- ---------------------------------------------------------------------------
+addon.Compat = {}
+
+function addon.Compat.SpellInfoByID(id)
+    if C_Spell and C_Spell.GetSpellInfo then
+        local ok, info = pcall(C_Spell.GetSpellInfo, id)
+        if ok and type(info) == "table" then
+            -- `subName` carries "Rank N" on retail-style APIs when present
+            return info.name, info.subName or info.rank
+        end
+    end
+    if GetSpellInfo then
+        local ok, name, rank = pcall(GetSpellInfo, id)
+        if ok then return name, rank end
+    end
+    return nil
+end
+
+function addon.Compat.SpellBookItem(i, bookType)
+    bookType = bookType or BOOKTYPE_SPELL or "spell"
+    if C_SpellBook and C_SpellBook.GetSpellBookItemInfo then
+        local ok, info = pcall(C_SpellBook.GetSpellBookItemInfo, i, bookType)
+        if ok and type(info) == "table" then
+            return info.name, info.subName or info.rank
+        end
+    end
+    if GetSpellBookItemName then
+        local ok, name, rank = pcall(GetSpellBookItemName, i, bookType)
+        if ok then return name, rank end
+    end
+    return nil
+end
+
+-- ---------------------------------------------------------------------------
+-- Outdated-rank warning (chat, at login) — best effort; silently no-ops if the
+-- client exposes no rank info.
 -- ---------------------------------------------------------------------------
 local SPELLBOOK_RANKS = {}
 local function parseRank(rankStr)
     if not rankStr then return 0 end
-    local n = rankStr:match("(%d+)")
+    local n = tostring(rankStr):match("(%d+)")
     return tonumber(n) or 0
 end
 
 local function spellbookMaxRank(baseName)
     if SPELLBOOK_RANKS[baseName] then return SPELLBOOK_RANKS[baseName] end
     local maxRank = 0
-    local i = 1
-    while true do
-        local name, rank = GetSpellBookItemName(i, BOOKTYPE_SPELL)
+    for i = 1, 300 do
+        local name, rank = addon.Compat.SpellBookItem(i, "spell")
         if not name then break end
         if name == baseName then
             maxRank = math.max(maxRank, parseRank(rank))
         end
-        i = i + 1
     end
     SPELLBOOK_RANKS[baseName] = maxRank
     return maxRank
 end
 
 function addon:CheckOutdatedRanks()
-    -- Rebuild on every call (cheap at login).
     for k in pairs(SPELLBOOK_RANKS) do SPELLBOOK_RANKS[k] = nil end
-    for slot = 1, 120 do
-        local action = slot
-        local actionType, id = GetActionInfo(action)
-        if actionType == "spell" and id then
-            local name, rank = GetSpellInfo(id)
-            if name then
-                local best = spellbookMaxRank(name)
-                local have = parseRank(rank)
-                if best > 0 and have > 0 and have < best then
-                    print(string.format(L["outdated_warning"], name, have, best))
+    pcall(function()
+        for slot = 1, 120 do
+            local actionType, id = GetActionInfo(slot)
+            if actionType == "spell" and id then
+                local name, rank = addon.Compat.SpellInfoByID(id)
+                if name then
+                    local best = spellbookMaxRank(name)
+                    local have = parseRank(rank)
+                    if best > 0 and have > 0 and have < best then
+                        print(string.format(L["outdated_warning"], name, have, best))
+                    end
                 end
             end
         end
-    end
+    end)
 end
 
 SLASH_COMBATFOREVERASSISTANT1 = "/cfa"

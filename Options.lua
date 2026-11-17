@@ -210,19 +210,24 @@ function buildGeneralTab(parent)
 
     header(L["opt_visual_mode"])
 
+    local modeRadios = {}
+    local function refreshRadios()
+        local mode = addon.db.visualMode or "circle"
+        for otherMode, btn in pairs(modeRadios) do
+            btn:SetChecked(otherMode == mode)
+        end
+    end
+
     local function radio(label, mode)
         local b = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
         b:SetWidth(22)
         b:SetHeight(22)
         b:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
+        modeRadios[mode] = b
         b:SetChecked((addon.db.visualMode or "circle") == mode)
-        b:SetScript("OnClick", function(self)
-            if self:GetChecked() then
-                addon.db.visualMode = mode
-                Options.SelectTab("general") -- refresh checked state
-            else
-                self:SetChecked(true) -- radio: keep one selected
-            end
+        b:SetScript("OnClick", function()
+            addon.db.visualMode = mode
+            refreshRadios()
         end)
         local fs = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         fs:SetPoint("LEFT", b, "RIGHT", 4, 0)

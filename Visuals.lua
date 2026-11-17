@@ -76,8 +76,7 @@ local function buttonSpellID(f)
     if slot then
         local actionType, id = GetActionInfo(slot)
         if actionType == "spell" and id then
-            local name = GetSpellInfo(id)
-            if name then return id end
+            return id
         end
     end
     return nil
