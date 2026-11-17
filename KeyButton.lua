@@ -84,11 +84,12 @@ function KeyButton.ShowFor(spellID)
     local key = findKeyForSpell(spellID)
     if not key then
         KeyButton.Hide()
-        return
+        return false
     end
     if not frame then createFrame() end
     frame.text:SetText(key)
     frame:Show()
+    return true
 end
 
 function KeyButton.Hide()

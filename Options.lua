@@ -353,11 +353,19 @@ function buildGeneralTab(parent)
         local _, id = GetActionInfo(1)
         if id and addon.Visuals then
             addon.Visuals.Show(id, "Utility")
+            if addon.KeyButton then
+                local had = addon.KeyButton.ShowFor(id)
+                if not had then print(L["key_button_no_key"]) end
+            end
             local t = 0
             local ff = CreateFrame("Frame")
             ff:SetScript("OnUpdate", function(self, d)
                 t = t + d
-                if t > 1.5 then addon.Visuals.Hide(); self:SetScript("OnUpdate", nil) end
+                if t > 1.5 then
+                    addon.Visuals.Hide()
+                    if addon.KeyButton then addon.KeyButton.Hide() end
+                    self:SetScript("OnUpdate", nil)
+                end
             end)
         else
             -- no spell in slot 1: flash nothing
