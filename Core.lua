@@ -18,6 +18,7 @@ local defaults = {
     visualMode = "circle",      -- "circle" | "border"
     borderWidth = 12,           -- px used by border mode
     keyButton = true,
+    keyButtonLocked = false,
     warnOutdated = true,
     RotationEditor = {},
 }

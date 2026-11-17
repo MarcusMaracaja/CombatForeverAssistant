@@ -45,8 +45,41 @@ local function createPanel()
     frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     frame:SetFrameStrata("DIALOG")
     frame:EnableMouse(true)
-    frame:SetMovable(true)
     applyBackdrop(frame, BG[1], BG[2], BG[3], BG[4])
+    if addon.db.posX and addon.db.posY then
+        frame:ClearAllPoints()
+        frame:SetPoint("CENTER", UIParent, "CENTER", addon.db.posX, addon.db.posY)
+    end
+
+    -- Drag strip (top bar) — the window moves by dragging it
+    local drag = CreateFrame("Frame", nil, frame)
+    drag:SetPoint("TOPLEFT", 0, 0)
+    drag:SetPoint("TOPRIGHT", 0, 0)
+    drag:SetHeight(34)
+    drag:EnableMouse(true)
+    drag:SetScript("OnMouseDown", function(self)
+        local mx, my = GetCursorPosition()
+        local scale = self:GetEffectiveScale()
+        local cx, cy = frame:GetCenter()
+        if cx and cy then
+            self.isDown = true
+            self.dx = cx - mx / scale
+            self.dy = cy - my / scale
+        end
+    end)
+    drag:SetScript("OnMouseUp", function(self) self.isDown = false end)
+    drag:SetScript("OnUpdate", function(self)
+        if not self.isDown then return end
+        if not IsMouseButtonDown("LeftButton") then self.isDown = false return end
+        local mx, my = GetCursorPosition()
+        local scale = self:GetEffectiveScale()
+        local ux, uy = UIParent:GetCenter()
+        local nx = mx / scale + self.dx - ux
+        local ny = my / scale + self.dy - uy
+        frame:ClearAllPoints()
+        frame:SetPoint("CENTER", UIParent, "CENTER", nx, ny)
+        addon.db.posX, addon.db.posY = nx, ny
+    end)
 
     -- Title bar
     local title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
@@ -288,6 +321,13 @@ function buildGeneralTab(parent)
     checkbox(L["opt_key_button"],
         function() return addon.db.keyButton end,
         function(v) addon.db.keyButton = v end)
+
+    checkbox(L["opt_lock_key_button"],
+        function() return addon.db.keyButtonLocked end,
+        function(v)
+            addon.db.keyButtonLocked = v
+            if addon.KeyButton then addon.KeyButton.ApplyLock() end
+        end)
 
     checkbox(L["opt_warn_outdated"],
         function() return addon.db.warnOutdated end,

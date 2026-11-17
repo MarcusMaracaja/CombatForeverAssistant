@@ -1,6 +1,8 @@
 -- Combat Forever Assistant — Key Button.
 -- Small draggable widget that shows the key bound to the same slot the
--- suggested spell is on. Entirely optional, toggled via the General tab or /cfa key.
+-- suggested spell is on. Toggled via /cfa key or the General tab.
+-- Can be locked from the General tab ("Lock the key button position") —
+-- locked means: not draggable and fully click-through.
 
 local addonName, addon = ...
 local L = addon.L
@@ -9,12 +11,11 @@ local KeyButton = {}
 addon.KeyButton = KeyButton
 
 local frame
-local db = addon.charDb
 
 local ACTION_BINDINGS = {
     { prefix = "ACTIONBUTTON", offset = 0 },
-    { prefix = "MULTIACTIONBAR1BUTTON", offset = 60 },   -- bottom left bar
-    { prefix = "MULTIACTIONBAR2BUTTON", offset = 48 },   -- right bar
+    { prefix = "MULTIACTIONBAR1BUTTON", offset = 60 },   -- bottom left bar (shift)
+    { prefix = "MULTIACTIONBAR2BUTTON", offset = 48 },   -- right bar (ctrl)
     { prefix = "MULTIACTIONBAR3BUTTON", offset = 72 },   -- bottom right bar
     { prefix = "MULTIACTIONBAR4BUTTON", offset = 84 },   -- extra bar (if present)
 }
@@ -31,7 +32,6 @@ local function bindingForSlot(slot)
 end
 
 local function findKeyForSpell(spellID)
-    -- Iterate real slots; returns key of the first slot showing that spell.
     for slot = 1, 96 do
         local actionType, id = GetActionInfo(slot)
         if actionType == "spell" and id == spellID then
@@ -42,14 +42,44 @@ local function findKeyForSpell(spellID)
     return nil
 end
 
+local function applySavedPosition(self)
+    local db = addon.charDb
+    self:ClearAllPoints()
+    self:SetPoint("CENTER", UIParent, "CENTER", db.keyX or 240, db.keyY or -180)
+end
+
+local function manualDragStart(self)
+    if addon.db.keyButtonLocked then return end
+    local mx, my = GetCursorPosition()
+    local scale = self:GetEffectiveScale()
+    local cx, cy = self:GetCenter()
+    self.isDown = true
+    self.dragDX = cx - mx / scale
+    self.dragDY = cy - my / scale
+end
+
+local function manualDragUpdate(self)
+    if not self.isDown then return end
+    if not IsMouseButtonDown("LeftButton") then
+        self.isDown = false
+        return
+    end
+    local mx, my = GetCursorPosition()
+    local scale = self:GetEffectiveScale()
+    local ux, uy = UIParent:GetCenter()
+    local nx = mx / scale + self.dragDX - ux
+    local ny = my / scale + self.dragDY - uy
+    self:ClearAllPoints()
+    self:SetPoint("CENTER", UIParent, "CENTER", nx, ny)
+    addon.charDb.keyX, addon.charDb.keyY = nx, ny
+end
+
 local function createFrame()
     frame = CreateFrame("Button", "CFA_KeyButton", UIParent)
     frame:SetWidth(46)
     frame:SetHeight(46)
     frame:SetFrameStrata("MEDIUM")
-    frame:SetMovable(true)
     frame:EnableMouse(true)
-    frame:RegisterForDrag("LeftButton")
 
     frame.bg = frame:CreateTexture(nil, "BACKGROUND")
     frame.bg:SetTexture("Interface\\Buttons\\WHITE8X8")
@@ -68,16 +98,23 @@ local function createFrame()
     frame.text:SetTextColor(1, 0.9, 0.3)
     frame.text:SetText("")
 
-    frame:SetScript("OnDragStart", frame.StartMoving)
-    frame:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
-        local x, y = self:GetCenter()
-        local ux, uy = UIParent:GetCenter()
-        db.keyX, db.keyY = (x or 0) - (ux or 0), (y or 0) - (uy or 0)
-    end)
+    frame:SetScript("OnMouseDown", manualDragStart)
+    frame:SetScript("OnMouseUp", function(self) self.isDown = false end)
+    frame:SetScript("OnUpdate", manualDragUpdate)
 
-    frame:SetPoint("CENTER", UIParent, "CENTER", db.keyX or 240, db.keyY or -180)
+    applySavedPosition(frame)
+    KeyButton.ApplyLock()
     return frame
+end
+
+function KeyButton.ApplyLock()
+    if not frame then return end
+    if addon.db.keyButtonLocked then
+        frame.isDown = false
+        frame:EnableMouse(false) -- clicks pass through to whatever is behind
+    else
+        frame:EnableMouse(true)
+    end
 end
 
 function KeyButton.ShowFor(spellID)
@@ -89,6 +126,7 @@ function KeyButton.ShowFor(spellID)
     if not frame then createFrame() end
     frame.text:SetText(key)
     frame:Show()
+    KeyButton.ApplyLock()
     return true
 end
 
