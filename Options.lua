@@ -238,25 +238,52 @@ function buildGeneralTab(parent)
     radio(L["opt_visual_circle"], "circle")
     radio(L["opt_visual_border"], "border")
 
-    -- Border width (numeric entry; keeps zero UI-template dependencies)
+    -- Border width (0-60 px), applies to both circle and frame modes
     local bwLabel = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     bwLabel:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
-    bwLabel:SetText(L["opt_border_width"] .. " (0-60 px)")
-    local bwEdit = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
-    bwEdit:SetWidth(48)
-    bwEdit:SetHeight(20)
-    bwEdit:SetAutoFocus(false)
-    bwEdit:SetNumeric(true)
-    bwEdit:SetMaxLetters(2)
-    bwEdit:SetPoint("LEFT", bwLabel, "RIGHT", 8, 0)
-    bwEdit:SetText(tostring(addon.db.borderWidth or 12))
-    bwEdit:SetScript("OnEnterPressed", function(self)
-        local v = tonumber(self:GetText())
-        if v then addon.db.borderWidth = math.max(0, math.min(60, v)) end
-        self:ClearFocus()
+    bwLabel:SetText(L["opt_border_width"] .. ":")
+    y = y - 18
+
+    local slider = CreateFrame("Slider", nil, parent)
+    slider:SetOrientation("HORIZONTAL")
+    slider:SetMinMaxValues(0, 60)
+    slider:SetValueStep(1)
+    pcall(function() slider:SetObeyStepOnDrag(true) end)
+    slider:SetWidth(170)
+    slider:SetHeight(18)
+    slider:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
+
+    local track = slider:CreateTexture(nil, "BACKGROUND")
+    track:SetTexture("Interface\\Buttons\\WHITE8X8")
+    track:SetVertexColor(0.18, 0.18, 0.18, 0.95)
+    track:SetPoint("LEFT", slider, "LEFT", 0, 0)
+    track:SetPoint("RIGHT", slider, "RIGHT", 0, 0)
+    track:SetPoint("CENTER", slider, "CENTER", 0, 0)
+    track:SetHeight(6)
+
+    slider:SetThumbTexture("Interface\\Buttons\\WHITE8X8")
+    local thumb = slider:GetThumbTexture()
+    if thumb then
+        thumb:SetWidth(12)
+        thumb:SetHeight(18)
+        thumb:SetVertexColor(ORANGE[1], ORANGE[2], ORANGE[3], 1)
+    end
+
+    local valFS = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    valFS:SetPoint("LEFT", slider, "RIGHT", 8, 0)
+    valFS:SetTextColor(1, 0.9, 0.6, 1)
+    local function updateVal(v) valFS:SetText(tostring(math.floor(v)) .. " px") end
+    slider:SetScript("OnValueChanged", function(self, v)
+        local w = math.floor(v)
+        addon.db.borderWidth = w
+        updateVal(w)
     end)
-    bwEdit:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
-    y = y - 30
+    slider:EnableMouseWheel(true)
+    slider:SetScript("OnMouseWheel", function(self, delta)
+        self:SetValue(math.max(0, math.min(60, self:GetValue() + (delta > 0 and 1 or -1))))
+    end)
+    slider:SetValue(addon.db.borderWidth or 12)
+    y = y - 34
 
     checkbox(L["opt_key_button"],
         function() return addon.db.keyButton end,
@@ -265,6 +292,56 @@ function buildGeneralTab(parent)
     checkbox(L["opt_warn_outdated"],
         function() return addon.db.warnOutdated end,
         function(v) addon.db.warnOutdated = v end)
+
+    -- Single highlight color (otherwise colors are per suggestion kind)
+    local refreshSwatches
+    local singleCheck
+    singleCheck = checkbox(L["opt_single_color"],
+        function() return addon.db.useSingleColor end,
+        function(v)
+            addon.db.useSingleColor = v
+            if refreshSwatches then refreshSwatches() end
+        end)
+
+    local swatches = {}
+    refreshSwatches = function()
+        local sel = addon.db.singleColorIndex or 2
+        for i, s in ipairs(swatches) do
+            if addon.db.useSingleColor and i == sel then
+                s.sel:Show()
+            else
+                s.sel:Hide()
+            end
+        end
+    end
+
+    for i, rgb in ipairs(addon.Visuals.PresetColors) do
+        local s = CreateFrame("Button", nil, parent)
+        s:SetWidth(22)
+        s:SetHeight(22)
+        s:SetPoint("TOPLEFT", parent, "TOPLEFT", 6 + (i - 1) * 28, y)
+        s.sel = s:CreateTexture(nil, "BORDER")
+        s.sel:SetTexture("Interface\\Buttons\\WHITE8X8")
+        s.sel:SetVertexColor(1, 1, 1, 1)
+        s.sel:SetWidth(26)
+        s.sel:SetHeight(26)
+        s.sel:SetPoint("CENTER", s, "CENTER", 0, 0)
+        s.bg = s:CreateTexture(nil, "ARTWORK")
+        s.bg:SetTexture("Interface\\Buttons\\WHITE8X8")
+        s.bg:SetVertexColor(rgb[1], rgb[2], rgb[3], 1)
+        s.bg:SetWidth(22)
+        s.bg:SetHeight(22)
+        s.bg:SetPoint("CENTER", s, "CENTER", 0, 0)
+        s:SetScript("OnClick", function()
+            addon.db.useSingleColor = true
+            addon.db.singleColorIndex = i
+            if singleCheck then singleCheck:SetChecked(true) end
+            refreshSwatches()
+        end)
+        swatches[i] = s
+    end
+    refreshSwatches()
+    y = y - 30
 
     -- Test highlight: flashes the first spell in your spellbook for 1.5s
     local test = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")

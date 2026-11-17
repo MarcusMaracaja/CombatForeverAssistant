@@ -26,6 +26,7 @@ local strings = {
     ["opt_border_width"]        = { en = "Border width", pt = "Largura da moldura" },
     ["opt_key_button"]          = { en = "Key button (shows the bound key)", pt = "Botao de tecla (mostra a tecla ligada)" },
     ["opt_warn_outdated"]       = { en = "Warn about outdated ability ranks on the action bar", pt = "Avisar sobre habilidades desatualizadas na barra de acao" },
+    ["opt_single_color"]        = { en = "Use a single highlight color", pt = "Usar uma cor unica de destaque" },
     ["opt_save"]                = { en = "Save Settings", pt = "Salvar Configuracoes" },
     ["opt_save_done"]           = { en = "Settings saved.", pt = "Configuracoes salvas." },
     ["opt_test"]                = { en = "Test Highlight", pt = "Testar Destaque" },

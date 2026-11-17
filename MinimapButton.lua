@@ -23,12 +23,8 @@ local function createFrame()
     frame.icon:SetHeight(22)
     frame.icon:SetPoint("CENTER", 0, 0)
 
-    frame.ring = frame:CreateTexture(nil, "OVERLAY")
-    frame.ring:SetTexture("Interface\\AddOns\\CombatForeverAssistant\\Textures\\CFA_Circle.tga")
-    frame.ring:SetWidth(32)
-    frame.ring:SetHeight(32)
-    frame.ring:SetPoint("CENTER", 0, 0)
-    frame.ring:SetVertexColor(1.0, 0.55, 0.10, 1)
+    frame.ring = addon.Visuals and addon.Visuals.DashRing(frame, 16, 2.5, { 1.0, 0.55, 0.10 }, 12)
+        or nil -- Visuals always loads before this file; fallback kept for safety
 
     local ANGLE = db.minimapAngle or 210
 
