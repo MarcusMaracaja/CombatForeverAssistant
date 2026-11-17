@@ -20,18 +20,26 @@ local ORANGE = { 1.0, 0.55, 0.10 }
 local BG = { 0.02, 0.02, 0.02, 0.90 }
 
 local function applyBackdrop(f, r, g, b, a)
-    f:SetBackdrop({
-        bgFile = "Interface\\Buttons\\WHITE8X8",
-        edgeFile = "Interface\\Buttons\\WHITE8X8",
-        tile = true, tileSize = 8, edgeSize = 1,
-        insets = { left = 0, right = 0, top = 0, bottom = 0 },
-    })
-    f:SetBackdropColor(r, g, b, a)
-    f:SetBackdropBorderColor(ORANGE[1], ORANGE[2], ORANGE[3], 0.55)
+    if f.SetBackdrop then
+        f:SetBackdrop({
+            bgFile = "Interface\\Buttons\\WHITE8X8",
+            edgeFile = "Interface\\Buttons\\WHITE8X8",
+            tile = true, tileSize = 8, edgeSize = 1,
+            insets = { left = 0, right = 0, top = 0, bottom = 0 },
+        })
+        f:SetBackdropColor(r, g, b, a)
+        f:SetBackdropBorderColor(ORANGE[1], ORANGE[2], ORANGE[3], 0.55)
+    else
+        -- fallback for clients without backdrop support
+        local bg = f:CreateTexture(nil, "BACKGROUND")
+        bg:SetTexture("Interface\\Buttons\\WHITE8X8")
+        bg:SetVertexColor(r, g, b, a)
+        bg:SetAllPoints(f)
+    end
 end
 
 local function createPanel()
-    frame = CreateFrame("Frame", "CFA_OptionsFrame", UIParent)
+    frame = CreateFrame("Frame", "CFA_OptionsFrame", UIParent, "BackdropTemplate")
     frame:SetWidth(PANEL_W)
     frame:SetHeight(PANEL_H)
     frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
