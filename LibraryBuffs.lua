@@ -142,9 +142,51 @@ local E = {
 
     ---------------------------------------------------------- ROGUE (pending data)
 
-    ---------------------------------------------------------- SHAMAN (pending data)
+    ---------------------------------------------------------- SHAMAN
+    -- Weapon enchants are NOT UnitBuff auras: detect via GetWeaponEnchantInfo().
+    -- `enchants` here maps rank -> temporary enchant ID (informational).
+    { family = "LightningShield", name = "Lightning Shield", class = "SHAMAN", kind = "self",
+      ranks = { 324, 325, 905, 945, 8134, 10431, 10432 }, tierBase = 0 },
+    { family = "RockbiterWeapon", name = "Rockbiter Weapon", class = "SHAMAN", kind = "enchant",
+      ranks = { 8017, 8018, 8019, 10399, 16314, 16315, 16316 }, tierBase = 0,
+      enchants = { 29, 6, 1, 503, 1663, 683, 1664 } },
+    { family = "WindfuryWeapon", name = "Windfury Weapon", class = "SHAMAN", kind = "enchant",
+      ranks = { 8232, 8235, 10486, 16362 }, tierBase = 0,
+      enchants = { 283, 284, 525, 1669 } },
+    { family = "FlametongueWeapon", name = "Flametongue Weapon", class = "SHAMAN", kind = "enchant",
+      ranks = { 8024, 8027, 8030, 16339, 16341, 16342 }, tierBase = 0,
+      enchants = { 5, 4, 3, 523, 1665, 1666 } },
+    -- Healing Wave's effective stat totems: the buff ON the player (aura IDs).
+    { family = "StrengthOfEarthAura", name = "Strength of Earth", class = "SHAMAN", kind = "totem",
+      ranks = { 8076, 8162, 8163, 10441, 25362 }, tierBase = 0 },
+    { family = "GraceOfAirAura", name = "Grace of Air", class = "SHAMAN", kind = "totem",
+      ranks = { 8836, 10626, 25360 }, tierBase = 0 },
+    { family = "WindfuryTotemAura", name = "Windfury Totem", class = "SHAMAN", kind = "totem",
+      ranks = { 8516, 10608, 10610 }, tierBase = 0 },
+    { family = "ManaSpringAura", name = "Mana Spring", class = "SHAMAN", kind = "totem",
+      ranks = { 5677, 10491, 10493, 10494 }, tierBase = 0 },
+    -- Not vanilla 1.12 (do NOT scan): Earth Shield, Molten Armor.
 
-    ---------------------------------------------------------- MAGE (pending data)
+    ---------------------------------------------------------- MAGE
+    { family = "ArcaneIntellect", name = "Arcane Intellect", class = "MAGE", kind = "raid",
+      ranks = { 1459, 1460, 1461, 10156, 10157 }, tierBase = 0 },
+    { family = "ArcaneIntellect", name = "Arcane Intellect (1.11 duplicate)", class = "MAGE", kind = "raid",
+      ranks = { 16876 }, tierBase = 4 }, -- 1.11+ re-issue of R5; aura is the same
+    { family = "ArcaneBrilliance", name = "Arcane Brilliance", class = "MAGE", kind = "raid",
+      ranks = { 23028 }, tierBase = 0 },
+    { family = "FrostArmor", name = "Frost Armor", class = "MAGE", kind = "self",
+      ranks = { 168, 7300, 7301 }, tierBase = 0 },
+    { family = "IceArmor", name = "Ice Armor", class = "MAGE", kind = "self",
+      ranks = { 7302, 7320, 10219, 10220 }, tierBase = 0 },
+    { family = "MageArmor", name = "Mage Armor", class = "MAGE", kind = "self",
+      ranks = { 6117, 22782, 22783 }, tierBase = 0 },
+    { family = "FrostWard", name = "Frost Ward", class = "MAGE", kind = "self",
+      ranks = { 6143, 8461, 8462, 10177 }, tierBase = 0 }, -- +28609 (VERIFY: post-1.12)
+    { family = "FireWard", name = "Fire Ward", class = "MAGE", kind = "self",
+      ranks = { 543, 8457, 8458, 10223, 10225 }, tierBase = 0 },
+    { family = "Clearcasting", name = "Clearcasting", class = "MAGE", kind = "other",
+      ranks = { 12536 }, tierBase = 0 }, -- talent proc aura
+    -- Molten Armor: not in vanilla 1.12 (TBC 30482). Not scanned.
 
     ---------------------------------------------------------- WARLOCK (pending data)
 }
