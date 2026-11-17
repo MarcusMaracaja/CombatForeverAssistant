@@ -1,0 +1,11 @@
+# Build output / archives
+*.zip
+*.rar
+# IDE
+.vscode/
+.idea/
+# OS
+Thumbs.db
+desktop.ini
+# Local backups
+_backup_*/
