@@ -503,6 +503,14 @@ function buildGeneralTab(parent)
         function() return addon.db.keyButton end,
         function(v) addon.db.keyButton = v end)
 
+    checkbox(L["opt_key_button_always"],
+        function() return addon.db.keyButtonAlways end,
+        function(v)
+            addon.db.keyButtonAlways = v
+            if v and addon.KeyButton then addon.KeyButton.ShowPlaceholder() end
+            if not v and addon.KeyButton then addon.KeyButton.Hide() end
+        end)
+
     checkbox(L["opt_lock_key_button"],
         function() return addon.db.keyButtonLocked end,
         function(v)
@@ -584,7 +592,13 @@ function buildGeneralTab(parent)
                 t = t + d
                 if t > 1.5 then
                     addon.Visuals.Hide()
-                    if addon.KeyButton then addon.KeyButton.Hide() end
+                    if addon.KeyButton then
+                        if addon.db.keyButtonAlways then
+                            addon.KeyButton.ShowPlaceholder()
+                        else
+                            addon.KeyButton.Hide()
+                        end
+                    end
                     self:SetScript("OnUpdate", nil)
                 end
             end)

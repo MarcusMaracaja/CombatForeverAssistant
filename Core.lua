@@ -19,6 +19,7 @@ local defaults = {
     borderWidth = 12,           -- px used by border mode
     keyButton = true,
     keyButtonLocked = false,
+    keyButtonAlways = false,
     keySize = 46,
     keyFont = "Fonts\\FRIZQT__.TTF",
     keyBgColor = { 0.05, 0.05, 0.05 },
@@ -101,6 +102,8 @@ frame:SetScript("OnUpdate", function(_, delta)
     if addon.KeyButton then
         if suggestion and addon.db.keyButton then
             addon.KeyButton.ShowFor(suggestion.spellID)
+        elseif addon.db.keyButton and addon.db.keyButtonAlways then
+            addon.KeyButton.ShowPlaceholder()
         else
             addon.KeyButton.Hide()
         end

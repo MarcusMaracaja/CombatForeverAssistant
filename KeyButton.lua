@@ -178,6 +178,14 @@ function KeyButton.ApplyLock()
     end
 end
 
+function KeyButton.ShowPlaceholder()
+    if not frame then createFrame() end
+    frame.text:SetText("?")
+    frame:Show()
+    KeyButton.ApplyLock()
+    return true
+end
+
 function KeyButton.ShowFor(spellID)
     local key = findKeyForSpell(spellID)
     if not key then

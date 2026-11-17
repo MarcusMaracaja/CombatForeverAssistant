@@ -25,6 +25,7 @@ local strings = {
     ["opt_visual_border"]       = { en = "Button frame (border)", pt = "Moldura no botao (borda)" },
     ["opt_border_width"]        = { en = "Border width", pt = "Largura da moldura" },
     ["opt_key_button"]          = { en = "Key button (shows the bound key)", pt = "Botao de tecla (mostra a tecla ligada)" },
+    ["opt_key_button_always"]   = { en = "Always show the key button", pt = "Sempre exibir o botao de tecla" },
     ["opt_lock_key_button"]     = { en = "Lock the key button position", pt = "Travar a posicao do botao de tecla" },
     ["opt_tab_key"]             = { en = "Key button", pt = "Botao de tecla" },
     ["opt_key_size"]            = { en = "Size", pt = "Tamanho" },
