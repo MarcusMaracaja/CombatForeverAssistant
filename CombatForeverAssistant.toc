@@ -15,3 +15,12 @@ Visuals.lua
 KeyButton.lua
 MinimapButton.lua
 Options.lua
+Modules\Hunter\Localization.lua
+Modules\Hunter\Functions.lua
+Modules\Hunter\Predicates.lua
+Modules\Hunter\Scripts_SV.lua
+Modules\Hunter\Scripts_BM.lua
+Modules\Hunter\Scripts_MM.lua
+Modules\Hunter\Scripts.lua
+Modules\Hunter\RotationEditor.lua
+Modules\Hunter\Options.lua

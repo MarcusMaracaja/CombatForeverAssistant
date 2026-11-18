@@ -1,0 +1,36 @@
+-- Combat Forever Assistant — Hunter module: Survival rotation (declared data).
+-- Order: shared melee/dead-zone prefix, then the Forever SV chain:
+--   Deterrence -> Scatter Shot -> Rapid Fire -> Viper/Scorpid (PvP) ->
+--   Multi-Shot/Aimed -> Serpent -> Arcane -> Volley.
+local moduleName, module = ...
+
+local Hunter = module
+Hunter.RotationModuleName = "CombatForeverAssistant"
+Hunter.RotationSpecs = Hunter.RotationSpecs or {}
+
+Hunter.HunterMeleeNodes = {
+    { id = "disengage",       spellID = 781,   name = "Disengage",       color = "Defensive", condition = "dead_zone_not_melee" },
+    { id = "counterattack",   spellID = 19306, name = "Counterattack",   color = "Damage",     condition = "melee_or_close" },
+    { id = "mongoose_bite",   spellID = 1495,  name = "Mongoose Bite",   color = "Damage",     condition = "melee_or_close" },
+    { id = "raptor_strike",   spellID = 2973,  name = "Raptor Strike",   color = "Damage",     condition = "melee_or_close" },
+    { id = "wing_clip",       spellID = 2974,  name = "Wing Clip",       color = "Interrupt",  condition = "pvp_not_clipped_melee" },
+    { id = "freezing_trap",   spellID = 1499,  name = "Freezing Trap",   color = "Interrupt",  condition = "melee_enemy_interruptible" },
+    { id = "explosive_trap",  spellID = 13813, name = "Explosive Trap",  color = "AoE",        condition = "within_8_aoe" },
+    { id = "immolation_trap", spellID = 13795, name = "Immolation Trap", color = "AoE",        condition = "within_8_st" },
+}
+
+Hunter.RotationSpecs.SV = {
+    title = "Survival",
+    nodes = module:ConcatCommonNodes(Hunter.HunterMeleeNodes, {
+        { id = "deterrence",    spellID = 19263, name = "Deterrence",    color = "Defensive", condition = "pvp_hp30" },
+        { id = "scatter_shot",  spellID = 19503, name = "Scatter Shot",  color = "Interrupt", condition = "enemy_interruptible_not_cc" },
+        { id = "rapid_fire",    spellID = 3045,  name = "Rapid Fire",    color = "Damage",    condition = "enemy_in_combat_not_too_close", passthrough = true },
+        { id = "viper_sting",   spellID = 3034,  name = "Viper Sting",   color = "Utility",   condition = "viper_pvp_mana" },
+        { id = "scorpid_sting", spellID = 3043,  name = "Scorpid Sting", color = "Utility",   condition = "scorpid_pvp_melee" },
+        { id = "multi_shot",    spellID = 2643,  name = "Multi-Shot",    color = "AoE",       condition = "aoe_not_too_close" },
+        { id = "aimed_shot",    spellID = 19434, name = "Aimed Shot",    color = "Damage",    condition = "not_aoe_not_too_close" },
+        { id = "serpent_sting", spellID = 1978,  name = "Serpent Sting", color = "Damage",    condition = "no_serpent_pve" },
+        { id = "arcane_shot",   spellID = 3044,  name = "Arcane Shot",   color = "Damage",    condition = "not_too_close_ranged" },
+        { id = "volley",        spellID = 1510,  name = "Volley",        color = "AoE",       condition = "aoe_not_pvp_mana15" },
+    }),
+}

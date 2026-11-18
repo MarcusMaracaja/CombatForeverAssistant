@@ -161,6 +161,48 @@ function addon.Compat.SpellBookItem(i, bookType)
     return nil
 end
 
+-- Highest rank the player actually knows for a spellID (same base name).
+-- Cached per id for the session.
+local _highestKnownCache = {}
+function addon.Compat.HighestKnownSpellID(id)
+    if not id then return nil end
+    if _highestKnownCache[id] then return _highestKnownCache[id] end
+    local base = nil
+    if addon.Compat.SpellInfoByID then
+        local name = addon.Compat.SpellInfoByID(id)
+        if name then base = name:gsub("%s*%b()%s*$", "") end
+    end
+    if not base then
+        _highestKnownCache[id] = id
+        return id
+    end
+    local bestID, bestRank = id, 0
+    for i = 1, 300 do
+        local name, rank = addon.Compat.SpellBookItem(i, "spell")
+        if name == nil then break end
+        local nBase = name:gsub("%s*%b()%s*$", "")
+        if nBase == base then
+            local entryID = nil
+            if C_SpellBook and C_SpellBook.GetSpellBookItemInfo then
+                local ok, info = pcall(C_SpellBook.GetSpellBookItemInfo, i, "spell")
+                if ok and type(info) == "table" then entryID = info.identifier or info.spellID end
+            end
+            if not entryID and type(GetSpellLink) == "function" then
+                local ok, link = pcall(GetSpellLink, i, "spell")
+                if ok and type(link) == "string" then
+                    entryID = tonumber(link:match("spell:(%d+)"))
+                end
+            end
+            local rankNum = tonumber((tostring(rank or ""):match("%d+"))) or 0
+            if entryID and (rankNum > bestRank or (rankNum == bestRank and not entryID)) then
+                bestID, bestRank = entryID, rankNum
+            end
+        end
+    end
+    _highestKnownCache[id] = bestID
+    return bestID
+end
+
 -- ---------------------------------------------------------------------------
 -- Outdated-rank warning (chat, at login) — best effort; silently no-ops if the
 -- client exposes no rank info.
@@ -203,6 +245,50 @@ function addon:CheckOutdatedRanks()
             end
         end
     end)
+end
+
+-- ---------------------------------------------------------------------------
+-- Declarative rotation engine (used by class modules)
+-- ---------------------------------------------------------------------------
+function addon:ConcatCommonNodes(common, nodes)
+    local out = {}
+    for _, n in ipairs(common or {}) do out[#out + 1] = n end
+    for _, n in ipairs(nodes or {}) do out[#out + 1] = n end
+    return out
+end
+
+function addon:RunDeclaredRotation(module, specKey, env)
+    if type(module) ~= "table" then return false end
+    local specs = module.RotationSpecs
+    if type(specs) ~= "table" then return false end
+    local spec = specs[specKey]
+    if not spec then return false end
+    local nodes = spec.nodes
+    if type(nodes) ~= "table" then return false end
+    local disabled = (type(module.GetRotationDisabled) == "function" and module.GetRotationDisabled(specKey)) or nil
+    local preds = type(module.RotationPredicates) == "table" and module.RotationPredicates or {}
+    for _, node in ipairs(nodes) do
+        if node.enabled ~= false and not (disabled and disabled[node.id]) then
+            local pass = true
+            local cond = node.condition
+            if cond and cond ~= "" then
+                local p = preds[cond]
+                if type(p) == "table" and type(p.fn) == "function" then
+                    local ok, r = pcall(p.fn, env)
+                    pass = ok and r and true or false
+                else
+                    pass = true
+                end
+            end
+            if pass then
+                local knownID = addon.Compat.HighestKnownSpellID(node.spellID) or node.spellID
+                if module:TryFlash(knownID, node.color, function() return true end, node.name, env) then
+                    if not node.passthrough then return true end
+                end
+            end
+        end
+    end
+    return false
 end
 
 SLASH_COMBATFOREVERASSISTANT1 = "/cfa"
