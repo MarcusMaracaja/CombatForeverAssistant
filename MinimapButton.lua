@@ -1,4 +1,4 @@
--- Combat Forever Assistant — Minimap button (self-drawn, no libraries).
+-- Combat Forever Assistant — Minimap button (classic WoW minimap button art).
 -- Left click toggles the options window; drag around the minimap edge to move it.
 
 local addonName, addon = ...
@@ -10,20 +10,12 @@ local frame
 
 local function createFrame()
     frame = CreateFrame("Button", "CFA_MinimapButton", Minimap)
-    frame:SetWidth(34)
-    frame:SetHeight(34)
+    frame:SetSize(31, 31)
     frame:SetFrameStrata("MEDIUM")
+    frame:SetFrameLevel(8)
     frame:RegisterForClicks("LeftButtonUp")
     frame:RegisterForDrag("LeftButton")
-
-    frame.icon = frame:CreateTexture(nil, "ARTWORK")
-    frame.icon:SetTexture("Interface\\Icons\\Spell_Nature_Lightning")
-    frame.icon:SetWidth(22)
-    frame.icon:SetHeight(22)
-    frame.icon:SetPoint("CENTER", 0, 0)
-
-    frame.ring = addon.Visuals and addon.Visuals.DashRing(frame, 16, 2.5, { 1.0, 0.55, 0.10 }, 12)
-        or nil -- Visuals always loads before this file; fallback kept for safety
+    frame:SetHighlightTexture("Interface\\Minimap\\UI-Minimap-ZoomButton-Highlight")
 
     local function position()
         local angle = (addon.charDb and addon.charDb.minimapAngle) or 210
@@ -32,6 +24,23 @@ local function createFrame()
         local y = math.sin(rad) * 80
         frame:SetPoint("CENTER", Minimap, "CENTER", x, y)
     end
+
+    -- Classic WoW minimap button chrome: metal ring + dark background + icon.
+    local overlay = frame:CreateTexture(nil, "OVERLAY")
+    overlay:SetSize(53, 53)
+    overlay:SetTexture("Interface\\Minimap\\MiniMap-TrackingBorder")
+    overlay:SetPoint("TOPLEFT")
+
+    local background = frame:CreateTexture(nil, "BACKGROUND")
+    background:SetSize(20, 20)
+    background:SetTexture("Interface\\Minimap\\UI-Minimap-Background")
+    background:SetPoint("TOPLEFT", 7, -5)
+
+    frame.icon = frame:CreateTexture(nil, "ARTWORK")
+    frame.icon:SetSize(19, 19)
+    frame.icon:SetTexture("Interface\\AddOns\\CombatForeverAssistant\\Textures\\CFA_Minimap.tga")
+    frame.icon:SetTexCoord(0, 1, 0, 1)
+    frame.icon:SetPoint("TOPLEFT", 6, -6)
 
     frame:SetMovable(true)
     frame:SetScript("OnDragStart", function(self)
@@ -44,8 +53,9 @@ local function createFrame()
         local scale = UIParent:GetEffectiveScale()
         mx, my = mx / scale, my / scale
         if cx and cy then
-            local angle = math.deg(math.atan2(my - cy, mx - cx))
-            if addon.charDb then addon.charDb.minimapAngle = angle end
+            if addon.charDb then
+                addon.charDb.minimapAngle = math.deg(math.atan2(my - cy, mx - cx))
+            end
             position()
         end
     end)
@@ -56,8 +66,9 @@ local function createFrame()
             local scale = UIParent:GetEffectiveScale()
             mx, my = mx / scale, my / scale
             if cx and cy then
-                local angle = math.deg(math.atan2(my - cy, mx - cx))
-                if addon.charDb then addon.charDb.minimapAngle = angle end
+                if addon.charDb then
+                    addon.charDb.minimapAngle = math.deg(math.atan2(my - cy, mx - cx))
+                end
                 position()
             end
         end
