@@ -1,6 +1,7 @@
 ## Interface: 16001
 ## Title: Combat Forever Assistant
 ## Notes: Rotation assistant for WoW Forever: highlights the recommended ability on your action bars. | Assistente de rotacao para o WoW Forever: destaca na barra de acao a habilidade recomendada.
+## IconTexture: Interface\AddOns\CombatForeverAssistant\Textures\CFA_Minimap.tga
 ## Author: Marcus
 ## Version: 0.1.0
 ## SavedVariables: CombatForeverAssistantDB
