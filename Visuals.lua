@@ -90,6 +90,34 @@ local function buttonSpellID(f)
     return nil
 end
 
+local function baseName(n)
+    return n and n:gsub("%s*%b()%s*$", ""):lower() or nil
+end
+
+local function spellBaseName(id)
+    if not id or not (addon.Compat and addon.Compat.SpellInfoByID) then return nil end
+    return baseName(addon.Compat.SpellInfoByID(id))
+end
+
+-- rank-insensitive match: same base name, or same id
+local function spellMatches(barID, wantID)
+    if not barID or not wantID then return false end
+    if barID == wantID then return true end
+    local barBase, wantBase = spellBaseName(barID), spellBaseName(wantID)
+    return barBase ~= nil and barBase == wantBase
+end
+
+-- public: buttons on the action bars bound to this spell (id or family name)
+function Visuals.FindButtons(spellID)
+    ensureMap()
+    local out = {}
+    for _, btn in ipairs(buttonMap) do
+        local barID = buttonSpellID(btn)
+        if spellMatches(barID, spellID) then out[#out + 1] = btn end
+    end
+    return out
+end
+
 -- public so the minimap button (and others) can reuse the same dashed ring
 function Visuals.DashRing(parent, radius, thickness, rgb, segments)
     segments = segments or 14
@@ -161,7 +189,7 @@ function Visuals.Show(spellID, reason)
     local mode = addon.db.visualMode or "circle"
     local width = math.max(0, math.min(60, tonumber(addon.db.borderWidth) or 12))
     for _, btn in ipairs(buttonMap) do
-        if buttonSpellID(btn) == spellID then
+        if spellMatches(buttonSpellID(btn), spellID) then
             local overlay
             if mode == "border" then
                 overlay = makeBorderOverlay(btn, rgb, width)

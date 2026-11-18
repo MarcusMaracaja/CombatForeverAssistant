@@ -123,3 +123,39 @@ P["pvp_hp30"] = {
         return not module.HasFamilyBuff("player", "Deterrence")
     end,
 }
+
+-- ---------------------------------------------------------------------------
+-- Labels for the rotation editor's condition picker (bilingual)
+-- ---------------------------------------------------------------------------
+local LOCALE = GetLocale and GetLocale() or "enUS"
+local PTBR = (LOCALE == "ptBR")
+local function LBL(pt, en) return PTBR and pt or en end
+
+local LABELS = {
+    always                     = LBL("Sempre", "Always"),
+    is_aoe                     = LBL("Área (2+)", "AoE (2+)"),
+    not_too_close_ranged       = LBL("Fora do melee", "Outside melee"),
+    aoe_not_too_close          = LBL("AoE fora do melee", "AoE outside melee"),
+    aoe_not_pvp_mana15         = LBL("AoE PvE (mana > 15%)", "AoE PvE (mana > 15%)"),
+    not_aoe_not_too_close      = LBL("Alvo único ranged", "Single target ranged"),
+    enemy_in_combat_not_too_close = LBL("Inimigo em combate (ranged)", "Enemy in combat (ranged)"),
+    enemy_interruptible_not_cc  = LBL("Alvo conjurando (ranged)", "Target casting (ranged)"),
+    pet_interruptible           = LBL("Pet viva, alvo conjurando", "Pet alive, target casting"),
+    pvp_target_mana             = LBL("PvP, alvo usa mana", "PvP, mana target"),
+    pvp_target_melee_class      = LBL("PvP, alvo corpo a corpo", "PvP, melee target"),
+    viper_pvp_mana              = LBL("PvP mana, sem Viper Sting", "PvP mana, no Viper Sting"),
+    scorpid_pvp_melee           = LBL("PvP melee, sem Scorpid Sting", "PvP melee, no Scorpid Sting"),
+    no_serpent_pve              = LBL("PvE, sem Serpent Sting", "PvE, no Serpent Sting"),
+    no_serpent_mm               = LBL("Sem Serpent Sting", "No Serpent Sting"),
+    no_any_sting                = LBL("Sem nenhuma Sting", "No Sting active"),
+    melee_or_close              = LBL("Melee/perto", "Melee/close"),
+    dead_zone_not_melee         = LBL("Zona morta", "Dead zone"),
+    pvp_not_clipped_melee       = LBL("PvP melee, sem Wing Clip", "PvP melee, no Wing Clip"),
+    melee_enemy_interruptible   = LBL("Melee, alvo conjurando", "Melee, target casting"),
+    within_8_aoe                = LBL("Área a 8 yd", "AoE within 8 yd"),
+    within_8_st                 = LBL("Alvo único a 8 yd", "Single target within 8 yd"),
+    pvp_hp30                    = LBL("PvP, HP < 30%", "PvP, HP < 30%"),
+}
+for key, label in pairs(LABELS) do
+    if P[key] then P[key].label = label end
+end

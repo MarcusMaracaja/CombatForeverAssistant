@@ -64,6 +64,7 @@ end
 local frame = CreateFrame("Frame", "CombatForeverAssistantCore", UIParent)
 local TICK = 0.2
 local elapsed = 0
+local lastErrorPrint = 0
 
 local function playerCanRun()
     return UnitExists("player") and not UnitIsDeadOrGhost("player")
@@ -82,6 +83,7 @@ frame:SetScript("OnEvent", function(_, event, arg1, ...)
             pcall(addon.CheckOutdatedRanks, addon)
         end
         if addon.Minimap then addon.Minimap.Refresh() end
+        pcall(addon.PrintWelcome, addon)
     elseif event == "PLAYER_ENTERING_WORLD" then
         if addon.Visuals then addon.Visuals.RefreshMap() end
     elseif event == "SPELLS_CHANGED" or event == "UPDATE_BINDINGS"
@@ -106,8 +108,24 @@ frame:SetScript("OnUpdate", function(_, delta)
     if not playerCanRun() then return end
     local mod = addon.activeModule
     if not mod or not mod.GetSuggestion then return end
+    -- Test-flash (icon click in the editor / /cfa test) wins over the rotation
+    if addon.Visuals and addon.Visuals.flashSpell and GetTime() < (addon.Visuals.flashUntil or 0) then
+        addon.Visuals.Show(addon.Visuals.flashSpell, addon.Visuals.flashColor or "Utility")
+        return
+    elseif addon.Visuals then
+        addon.Visuals.flashSpell, addon.Visuals.flashUntil = nil, nil
+    end
     local ok, suggestion = pcall(mod.GetSuggestion, mod)
-    if not ok then return end
+    if not ok then
+        -- Never fail silently: surface the first error and throttle repeats.
+        addon.lastError = tostring(suggestion)
+        local now = GetTime()
+        if now - lastErrorPrint > 10 then
+            lastErrorPrint = now
+            print(string.format(L["rotation_error"] or "[CFA] Rotation error: %s", tostring(suggestion)))
+        end
+        return
+    end
     if addon.Visuals then
         if suggestion then
             addon.Visuals.Show(suggestion.spellID, suggestion.color or "Utility")
@@ -248,6 +266,79 @@ function addon:CheckOutdatedRanks()
 end
 
 -- ---------------------------------------------------------------------------
+-- Fine-grained filters — 6 cascade axes, each node may restrict under which
+-- conditions it fires. 0 = "any/both" (always passes).
+-- ---------------------------------------------------------------------------
+addon.FilterAxes = {
+    { key = "combat",   labelKey = "rot_axis_combat",
+      options = { { 1, "axis_in_combat" }, { 2, "axis_out_combat" } } },
+    { key = "env",      labelKey = "rot_axis_env",
+      options = { { 1, "PvE" }, { 2, "PvP" } } },  -- literal PvE/PvP labels
+    { key = "target",   labelKey = "rot_axis_target",
+      options = { { 1, "axis_attackable" }, { 2, "axis_casting" }, { 3, "axis_no_attack" } } },
+    { key = "range",    labelKey = "rot_axis_range",
+      options = { { 1, "axis_ranged" }, { 2, "axis_melee" }, { 3, "axis_dead_zone" } } },
+    { key = "resource", labelKey = "rot_axis_resource",
+      options = { { 1, "axis_mana15" }, { 2, "axis_mana40" }, { 3, "axis_mana50" },
+                  { 4, "axis_rage40" }, { 5, "axis_energy40" }, { 6, "axis_combo5" } } },
+    { key = "aoe",      labelKey = "rot_axis_aoe",
+      options = { { 1, "axis_aoe_2" }, { 2, "axis_single" } } },
+}
+
+local FILTER_EVALS = {
+    combat   = function(env, v)
+        if v == 1 then return env.inCombat and true or false end
+        if v == 2 then return not env.inCombat and true or false end
+        return true
+    end,
+    env      = function(env, v)
+        if v == 1 then return not env.isPvP and true or false end
+        if v == 2 then return env.isPvP and true or false end
+        return true
+    end,
+    target   = function(env, v)
+        if v == 1 then return env.hasActiveEnemy and true or false end
+        if v == 2 then return env.targetCasting and true or false end
+        if v == 3 then return not env.hasActiveEnemy and true or false end
+        return true
+    end,
+    range    = function(env, v)
+        local tooClose = env.tooCloseForRanged == true
+        local melee = env.isMelee == true
+        if v == 1 then return not tooClose and not melee and true or false end
+        if v == 2 then return (tooClose or melee) and true or false end
+        if v == 3 then return (tooClose and not melee) and true or false end
+        return true
+    end,
+    resource = function(env, v)
+        if v == 1 then return (env.manaPct or 0) > 15 end
+        if v == 2 then return (env.manaPct or 0) > 40 end
+        if v == 3 then return (env.manaPct or 0) > 50 end
+        if v == 4 then return (env.rage or 0) >= 40 end
+        if v == 5 then return (env.energy or 0) >= 40 end
+        if v == 6 then return (env.combo or 0) >= 5 end
+        return true
+    end,
+    aoe      = function(env, v)
+        if v == 1 then return env.isAoE and true or false end
+        if v == 2 then return not env.isAoE and true or false end
+        return true
+    end,
+}
+
+function addon.NodeFilterPass(env, filter)
+    if type(filter) ~= "table" then return true end
+    for _, axis in ipairs(addon.FilterAxes) do
+        local v = tonumber(filter[axis.key]) or 0
+        if v ~= 0 then
+            local fn = FILTER_EVALS[axis.key]
+            if fn and not fn(env, v) then return false end
+        end
+    end
+    return true
+end
+
+-- ---------------------------------------------------------------------------
 -- Declarative rotation engine (used by class modules)
 -- ---------------------------------------------------------------------------
 function addon:ConcatCommonNodes(common, nodes)
@@ -263,32 +354,113 @@ function addon:RunDeclaredRotation(module, specKey, env)
     if type(specs) ~= "table" then return false end
     local spec = specs[specKey]
     if not spec then return false end
-    local nodes = spec.nodes
+    -- Modules may merge per-character overrides (enabled/condition/filter)
+    local nodes = (type(module.GetEffectiveNodes) == "function" and module:GetEffectiveNodes(specKey)) or spec.nodes
     if type(nodes) ~= "table" then return false end
     local disabled = (type(module.GetRotationDisabled) == "function" and module.GetRotationDisabled(specKey)) or nil
     local preds = type(module.RotationPredicates) == "table" and module.RotationPredicates or {}
     for _, node in ipairs(nodes) do
         if node.enabled ~= false and not (disabled and disabled[node.id]) then
-            local pass = true
-            local cond = node.condition
-            if cond and cond ~= "" then
-                local p = preds[cond]
-                if type(p) == "table" and type(p.fn) == "function" then
-                    local ok, r = pcall(p.fn, env)
-                    pass = ok and r and true or false
-                else
-                    pass = true
+            if addon.NodeFilterPass(env, node.filter) then
+                local pass = true
+                local cond = node.condition
+                if cond and cond ~= "" then
+                    local p = preds[cond]
+                    if type(p) == "table" and type(p.fn) == "function" then
+                        local ok, r = pcall(p.fn, env)
+                        pass = ok and r and true or false
+                    else
+                        pass = true
+                    end
                 end
-            end
-            if pass then
-                local knownID = addon.Compat.HighestKnownSpellID(node.spellID) or node.spellID
-                if module:TryFlash(knownID, node.color, function() return true end, node.name, env) then
-                    if not node.passthrough then return true end
+                if pass then
+                    local knownID = addon.Compat.HighestKnownSpellID(node.spellID) or node.spellID
+                    if module:TryFlash(knownID, node.color, function() return true end, node.name, env) then
+                        if not node.passthrough then return true end
+                    end
                 end
             end
         end
     end
     return false
+end
+
+-- ---------------------------------------------------------------------------
+-- Flash test: highlights the buttons bound to a spell for a short time
+-- (used by the rotation editor's icon click; global, all classes).
+-- ---------------------------------------------------------------------------
+function addon:FlashSpell(spellID, color, duration)
+    if not spellID then return false end
+    duration = duration or 1.5
+    local known = spellID
+    if addon.Compat and addon.Compat.HighestKnownSpellID then
+        known = addon.Compat.HighestKnownSpellID(spellID) or spellID
+    end
+    local function baseName(n)
+        return n and n:gsub("%s*%b()%s*$", ""):lower() or nil
+    end
+    local want = baseName(addon.Compat.SpellInfoByID(known)) or tostring(known)
+    local found = false
+    if addon.Visuals and addon.Visuals.FindButtons then
+        for _, btn in ipairs(addon.Visuals.FindButtons(known)) do found = true break end
+    end
+    if not found then
+        print(addon.L["rot_not_on_bar"])
+        return false
+    end
+    addon.Visuals.flashSpell = known
+    addon.Visuals.flashUntil = GetTime() + duration
+    addon.Visuals.flashColor = color or "Utility"
+    return true
+end
+
+-- ---------------------------------------------------------------------------
+-- Welcome message (login): class, spec and race greeting
+-- ---------------------------------------------------------------------------
+local RACE_GREETING_KEYS = {
+    Human = "race_human", Dwarf = "race_dwarf", NightElf = "race_nightelf",
+    Gnome = "race_gnome", Orc = "race_orc", Scourge = "race_undead", Undead = "race_undead",
+    Tauren = "race_tauren", Troll = "race_troll",
+    HighOrderSkyborne = "race_highorder", WindshaperSkyborne = "race_windshaper",
+}
+local RACE_NAME_ALIASES = {
+    ["humano"] = "Human", ["anão"] = "Dwarf", ["anao"] = "Dwarf", ["dwarf"] = "Dwarf",
+    ["elfo noturno"] = "NightElf", ["nightelf"] = "NightElf", ["gnomo"] = "Gnome",
+    ["orc"] = "Orc", ["morto-vivo"] = "Scourge", ["mortovivo"] = "Scourge", ["undead"] = "Undead",
+    ["tauren"] = "Tauren", ["troll"] = "Troll", ["skyborne"] = "HighOrderSkyborne",
+}
+local function normalizeRaceName(s)
+    if type(s) ~= "string" then return nil end
+    s = s:lower()
+    local ok, stripped = pcall(function() return s:gsub("[áàâãä]", "a"):gsub("[éèêë]", "e"):gsub("[íìîï]", "i"):gsub("[óòôõö]", "o"):gsub("[úùûü]", "u"):gsub("[ç]", "c") end)
+    if ok then s = stripped end
+    return (s:gsub("%s+", " "):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
+function addon:GetRaceGreeting()
+    if type(UnitRace) ~= "function" then return nil end
+    local name, token = UnitRace("player")
+    local key = RACE_GREETING_KEYS[token]
+    if not key then
+        local alias = RACE_NAME_ALIASES[normalizeRaceName(name)]
+        key = alias and RACE_GREETING_KEYS[alias] or nil
+    end
+    return key and addon.L[key] or nil
+end
+
+function addon:PrintWelcome()
+    local className = UnitClass("player")
+    print(string.format(addon.L["welcome_loaded"], tostring(className)))
+    local mod = addon.activeModule
+    if mod and type(mod.DetectSpec) == "function" then
+        local ok, spec, source = pcall(mod.DetectSpec, mod)
+        if ok and spec then
+            local specName = addon.L["spec_" .. spec:lower()] or spec
+            print(string.format(addon.L["welcome_spec"], tostring(specName), tostring(source or "?")))
+        end
+    end
+    local greet = addon:GetRaceGreeting()
+    if greet then print(string.format(addon.L["welcome_race"], greet)) end
 end
 
 SLASH_COMBATFOREVERASSISTANT1 = "/cfa"
@@ -301,6 +473,9 @@ SlashCmdList["COMBATFOREVERASSISTANT"] = function(msg)
             print(string.format(L["status_module"], tostring(addon.activeModule:GetStatus())))
         else
             print(L["status_no_module"])
+        end
+        if addon.lastError then
+            print(string.format(L["rotation_error"], addon.lastError))
         end
     elseif msg == "key" then
         addon.db.keyButton = not addon.db.keyButton

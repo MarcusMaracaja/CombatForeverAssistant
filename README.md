@@ -29,7 +29,8 @@ control.
 | Key button (draggable widget showing the bound key, lock option, "always show", 6 fonts, size, background/text color, transparency, reset) | Working (tested in game) |
 | **Buff library** (`CFA.BuffLib`) — all 9 vanilla classes, all ranks, aura/cast IDs, tier tracking, "outdated buff" flags | Implemented, data verified via wowhead classic/classicdb/wiki — **not yet verified in game** |
 | **Hunter class module (SV / BM / MM)** — declarative rotation (nodes: Serpent Sting, Aimed/Arcane Shot, Wing Clip, traps, aspects…), spec detection via C_Traits + override, Castable engine + aura beliefs | Implemented (not yet verified in game) — load validated; runtime test pending |
-| **Rotation editor window** (rotation toggles per character, BM/MM/SV tabs, reset-to-default) | Implemented (not yet verified in game) |
+| **Rotation editor window** (per-character node toggles, per-node conditions/filters via 6 cascade axes + special predicates, icon-click flash test, BM/MM/SV tabs, reset-to-default) | Implemented (not yet verified in game) |
+| Login welcome (class / spec + detection source / race greeting) | Implemented (not yet verified in game) |
 | Class modules (Shaman, Warrior, Druid, Paladin) | **Not implemented yet** — next phases |
 
 > **Saved variables:** settings persist on `/reload` (and on logout/clean exit), like any
@@ -44,8 +45,13 @@ control.
 - toggle the module on/off, pick the spec (**auto / BM / MM / SV**)
 - click **Open rotation editor** to open the rotation window (cards with every
   skill of the rotation — click to enable/disable individual nodes, per character)
-- rotations are declared as data (`Modules\Hunter\Scripts_SV|BM|MM.lua`) and toggles are
-  stored in the character DB (`CombatForeverAssistantCharDB.hunterDisabled`)
+- each card: **[+]** adds conditions under which the ability fires (6 cascade
+  filter axes — combat / environment / target / range / resource / area — plus
+  special predicates), **[-]** removes them, per character
+- clicking a node's **icon flashes the button** it is bound to on your action bars (test)
+- rotations are declared as data (`Modules\Hunter\Scripts_SV|BM|MM.lua`) and the
+  per-character overrides are stored in the character DB
+  (`CombatForeverAssistantCharDB.hunterRotation`)
 
 > Engine: declarative rotation runner in `Core.lua` (`ConcatCommonNodes` /
 > `RunDeclaredRotation`), spec detection via `C_Traits` (override respected first),
@@ -91,7 +97,8 @@ Ele **não** aperta a tecla por você — apenas destaca o botão. Você continu
 | Botão de tecla (widget arrastável mostrando a tecla, trava, "sempre exibir", 6 fontes, tamanho, cor de fundo/texto, transparência, restaurar padrões) | Funcionando (testado em jogo) |
 | **Biblioteca de buffs** (`CFA.BuffLib`) — as 9 classes vanilla, todos os ranks, IDs de aura/cast, tiers, aviso de buff desatualizado | Implementada, dados verificados via wowhead classic/classicdb/wiki — **ainda não verificada em jogo** |
 | **Módulo Hunter (SV / BM / MM)** — rotação declarativa (Serpent Sting, Aimed/Arcane Shot, Wing Clip, armadilhas, aspectos…), detecção de spec via C_Traits + override, engine de Castable + crenças de aura | Implementado (ainda não verificado em jogo) — load validado; teste em jogo pendente |
-| **Janela de edição de rotação** (liga/desliga nós por personagem, abas BM/MM/SV, restaurar padrão) | Implementada (ainda não verificada em jogo) |
+| **Janela de edição de rotação** (liga/desliga nós por personagem, condições/filtros por nó via 6 eixos de filtro + predicados especiais, clique no ícone para testar o flash, abas BM/MM/SV, restaurar padrão) | Implementada (ainda não verificada em jogo) |
+| Boas-vindas no login (classe / spec + origem da detecção / saudação racial) | Implementada (ainda não verificada em jogo) |
 | Módulos de classe (Shaman, Warrior, Druid, Paladin) | **Ainda não implementados** — próximas fases |
 
 > **Variáveis salvas:** as configurações persistem no `/reload` (e no logout/saída limpa),
@@ -107,8 +114,13 @@ Ele **não** aperta a tecla por você — apenas destaca o botão. Você continu
 - ligar/desligar o módulo e escolher a spec (**automático / BM / MM / SV**)
 - clique em **Abrir editor de rotação** para abrir a janela com os cards de
   todas as habilidades da rotação — clique para ligar/desligar cada nó, por personagem
-- as rotações são declaradas como dados (`Modules\Hunter\Scripts_SV|BM|MM.lua`) e as
-  alterações ficam no DB do personagem (`CombatForeverAssistantCharDB.hunterDisabled`)
+- cada card: **[+]** adiciona condições para a habilidade disparar (6 eixos de
+  filtro em cascata — combate / ambiente / alvo / alcance / recurso / área — além
+  dos predicados especiais), **[-]** remove, por personagem
+- clicar no **ícone** do nó faz o botão ligado a ele piscar nas suas barras (teste)
+- as rotações são declaradas como dados (`Modules\Hunter\Scripts_SV|BM|MM.lua`) e os
+  overrides por personagem ficam no DB do personagem
+  (`CombatForeverAssistantCharDB.hunterRotation`)
 
 > Motor: runner de rotação declarativa no `Core.lua` (`ConcatCommonNodes` /
 > `RunDeclaredRotation`), detecção de spec via `C_Traits` (override tem prioridade),

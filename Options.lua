@@ -17,7 +17,7 @@ local currentTab = "general"
 local PANEL_W, PANEL_H = 520, 420
 local SIDE_W = 128
 local ORANGE = { 1.0, 0.55, 0.10 }
-local BG = { 0.02, 0.02, 0.02, 0.90 }
+local BG = { 0.02, 0.02, 0.02, 1.0 }
 
 local function applyBackdrop(f, r, g, b, a)
     if f.SetBackdrop then

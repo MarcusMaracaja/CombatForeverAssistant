@@ -12,6 +12,14 @@ local BuffLib = module.BuffLib
 -- ---------------------------------------------------------------------------
 module.Castable = module.Castable or {}
 
+-- Secret-number guard (this client degrades UNIT_* reads to secret values
+-- while our code executes): anything we cannot read becomes `fallback`.
+function module.SafeNumber(v, fallback)
+    if type(v) ~= "number" then return fallback end
+    if _G.issecretvalue and issecretvalue(v) then return fallback end
+    return v
+end
+
 function module.SpellIDFromName(name)
     if type(name) ~= "string" or name == "" then return nil end
     if module.Compat and module.Compat.SpellBookItem then
@@ -41,22 +49,27 @@ function module.SpellKnown(name)
         end
         return false
     end
-    return type(IsSpellKnown) == "function" and IsSpellKnown(name) or false
+    return false
 end
 
 function module.IsOnCooldown(name, id)
     local known = id or module.SpellIDFromName(name)
-    if known and C_Spell and C_Spell.GetSpellCooldown then
-        local ok, info = pcall(C_Spell.GetSpellCooldown, known)
-        if ok and type(info) == "table" then
-            local start = info.startTime
-            local dur = info.duration
-            if type(start) == "number" and type(dur) == "number"
-                and start > 0 and duration > 0
-                and (GetTime() - start) < dur then
-                return true
-            end
-        end
+    if not known then return false end
+    if not (C_Spell and C_Spell.GetSpellCooldown) then return false end
+    local ok, info = pcall(C_Spell.GetSpellCooldown, known)
+    if not ok or type(info) ~= "table" then return false end
+    -- This client reports cooldownStartTime/cooldownDuration (older field names
+    -- startTime/duration on some paths); isActive == true means on recovery.
+    local start = info.startTime or info.cooldownStartTime
+    local dur = info.duration or info.cooldownDuration
+    if type(start) == "number" and type(dur) == "number" and start > 0 and dur > 0 then
+        if _G.issecretvalue and issecretvalue(start) then return true end
+        return (GetTime() - start) < dur
+    end
+    if info.isActive == true then
+        -- GCD (~1.5s) is not a cooldown; anything else is treated as active
+        if type(dur) == "number" and dur <= 1.5 then return false end
+        return true
     end
     return false
 end

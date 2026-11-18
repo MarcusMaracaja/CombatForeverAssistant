@@ -114,67 +114,135 @@ end
 local function countEnemiesInCombat()
     if _G.MaxDps and type(_G.MaxDps.SmartAoe) == "function" then
         local ok, n = pcall(_G.MaxDps.SmartAoe)
-        if ok and type(n) == "number" then return n end
+        if ok and type(n) == "number" then return module.SafeNumber(n, 0) or 0 end
     end
     -- Fallback: no AoE detector available. Zero is safe (AoE nodes simply
     -- won't suggest); the player can still fire them from the rotation.
     return 0
 end
 
+local function safePct(cur, max)
+    local c = module.SafeNumber(cur, nil)
+    local m = module.SafeNumber(max, nil)
+    if c and m and m > 0 then
+        return math.floor(((c / m) * 100) + 0.5)
+    end
+    return 100
+end
+
+local function safePower(unit, ptype)
+    if type(UnitPower) ~= "function" then return 0 end
+    local ok, v = pcall(UnitPower, unit, ptype)
+    if ok then
+        return module.SafeNumber(v, 0) or 0
+    end
+    return 0
+end
+
+local function isCastingSomething(unit)
+    if type(UnitCastingInfo) == "function" then
+        local ok, n = pcall(UnitCastingInfo, unit)
+        if ok and n then
+            if _G.issecretvalue and issecretvalue(n) then return false end
+            return true
+        end
+    end
+    if type(UnitChannelInfo) == "function" then
+        local ok, n = pcall(UnitChannelInfo, unit)
+        if ok and n then
+            if _G.issecretvalue and issecretvalue(n) then return false end
+            return true
+        end
+    end
+    return false
+end
+
+local function combatOf(unit)
+    if type(UnitAffectingCombat) ~= "function" then return false end
+    local ok, v = pcall(UnitAffectingCombat, unit)
+    if not ok then return true end
+    if _G.issecretvalue and issecretvalue(v) then return true end
+    return v and true or false
+end
+
+-- Melee probe: the slot of "Attack" on the action bars (engine reports range)
+local function findAttackSlot()
+    if C_ActionBar and C_ActionBar.IsAttackAction then
+        for slot = 1, 120 do
+            local ok, r = pcall(C_ActionBar.IsAttackAction, slot)
+            if ok and r then return slot end
+        end
+        return nil
+    end
+    if type(GetActionInfo) == "function" then
+        for slot = 1, 120 do
+            local actionType, id = GetActionInfo(slot)
+            if actionType == "spell" and id then
+                local name = module.SpellName(id)
+                if name and (name == "Attack" or name == "Atacar" or name == "Ataque") then
+                    return slot
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function attackSlotInRange()
+    local slot = findAttackSlot()
+    if not slot then return nil end
+    if C_ActionBar and C_ActionBar.IsActionInRange then
+        local ok, r = pcall(C_ActionBar.IsActionInRange, slot)
+        if not ok then return nil end
+        if r == 1 then return true end
+        if r == 0 then return false end
+        return nil
+    end
+    return nil
+end
+
+local function spellProbe(id)
+    local name = module.SpellName(id)
+    if not name or type(IsSpellInRange) ~= "function" then return nil end
+    local ok, r = pcall(IsSpellInRange, name, "target")
+    if ok and r == 1 then return true end
+    if ok and r == 0 then return false end
+    return nil
+end
+
 function module:BuildEnv()
     local env = {}
-    env.myHP = 100
-    if type(UnitHealth) == "function" and type(UnitHealthMax) == "function" then
-        local hp, maxHp = UnitHealth("player"), UnitHealthMax("player")
-        if type(hp) == "number" and type(maxHp) == "number" and maxHp > 0 then
-            env.myHP = math.floor((hp / maxHp) * 100)
-        end
-    end
-    env.manaPct = 100
-    if type(UnitPower) == "function" and type(UnitPowerMax) == "function" then
-        local mp, maxMp = UnitPower("player"), UnitPowerMax("player")
-        if type(mp) == "number" and type(maxMp) == "number" and maxMp > 0 then
-            env.manaPct = math.floor((mp / maxMp) * 100)
-        end
-    end
+    env.myHP = safePct(UnitHealth and UnitHealth("player"), UnitHealthMax and UnitHealthMax("player"))
+    env.manaPct = safePct(UnitPower and UnitPower("player"), UnitPowerMax and UnitPowerMax("player"))
+    env.rage = safePower("player", 1)
+    env.energy = safePower("player", 3)
+    env.combo = safePower("player", 4)
+    env.targetCasting = isCastingSomething("target")
     env.hasActiveEnemy = module.UnitTargetExistsAndAttackable()
     env.isPvP = module.IsPvPTarget()
     env.isMelee = false
     env.tooCloseForRanged = false
-    if UnitExists("target") then
-        if env.targetDistance == nil then
-            -- no direct yard API trusted; infer from melee range / in-combat isMelee tap
-            env.targetDistance = 100
-        end
-    end
-    -- ranged dead zone: use Auto Shot range as probe when available
-    local autoShotName = module.SpellName(75)
-    local inAutoShotRange = nil
-    if autoShotName and type(IsSpellInRange) == "function" then
-        local ok, r = pcall(IsSpellInRange, autoShotName, "target")
-        if ok then inAutoShotRange = r end
-    end
-    local meleeProbe = nil
-    local wingName = module.SpellName(2974)
-    if wingName and type(IsSpellInRange) == "function" then
-        local ok, r = pcall(IsSpellInRange, wingName, "target")
-        if ok then meleeProbe = r end
-    end
-    if type(UnitDistanceSquared) == "function" then
-        local ok, sq = pcall(UnitDistanceSquared, "target")
-        if ok and type(sq) == "number" and sq >= 0 then
+    env.targetDistance = nil
+    if type(UnitDistanceSquared) == "function" and UnitExists("target") then
+        -- Only trust the reading when the client says it verified it
+        local ok, sq, checked = pcall(UnitDistanceSquared, "target")
+        sq = module.SafeNumber(sq, nil)
+        if ok and sq and checked == true then
             env.targetDistance = math.sqrt(sq)
             env.isMelee = env.targetDistance <= 10
             env.tooCloseForRanged = env.isMelee
         end
     end
-    if env.targetDistance == nil then
-        -- fallback: melee via Wing Clip probe, ranged via Auto Shot probe
-        if meleeProbe == 1 then
+    if env.targetDistance == nil and UnitExists("target") then
+        -- Fallback chain: Attack slot -> Wing Clip probe -> Auto Shot probe
+        local attackInRange = attackSlotInRange()
+        local wingProbe = spellProbe(2974)
+        local autoProbe = spellProbe(75)
+        if attackInRange == true or wingProbe == true then
             env.targetDistance = 5
             env.isMelee = true
             env.tooCloseForRanged = true
-        elseif inAutoShotRange == 1 then
+        elseif autoProbe == true then
             env.targetDistance = 35
             env.isMelee = false
             env.tooCloseForRanged = false
@@ -183,9 +251,13 @@ function module:BuildEnv()
             env.tooCloseForRanged = false
             env.isMelee = false
         end
+    elseif env.targetDistance == nil then
+        env.targetDistance = 100
+        env.tooCloseForRanged = false
+        env.isMelee = false
     end
-    env.petAlive = UnitExists("pet") and not UnitIsDeadOrGhost("pet")
-    env.inCombat = (type(UnitAffectingCombat) == "function" and UnitAffectingCombat("player")) and true or false
+    env.petAlive = (type(UnitExists) == "function" and UnitExists("pet") and not (UnitIsDeadOrGhost and UnitIsDeadOrGhost("pet"))) and true or false
+    env.inCombat = combatOf("player")
     env.isAoE = countEnemiesInCombat() >= 2
     return env
 end
@@ -264,15 +336,20 @@ end
 -- ---------------------------------------------------------------------------
 -- Aspects (global management)
 -- ---------------------------------------------------------------------------
+local function groupCount(fn)
+    if type(fn) ~= "function" then return 0 end
+    local ok, n = pcall(fn)
+    if ok and tonumber(n) then return tonumber(n) end
+    return 0
+end
+
 local function isGroupInCombat()
-    if type(UnitAffectingCombat) == "function" and UnitAffectingCombat("player") then return true end
-    local nP = (type(GetNumPartyMembers) == "function" and GetNumPartyMembers()) or 0
-    for i = 1, nP do
-        if type(UnitAffectingCombat) == "function" and UnitAffectingCombat("party" .. i) then return true end
+    if combatOf("player") then return true end
+    for i = 1, groupCount(GetNumPartyMembers) do
+        if combatOf("party" .. i) then return true end
     end
-    local nR = (type(GetNumRaidMembers) == "function" and GetNumRaidMembers()) or 0
-    for i = 1, nR do
-        if type(UnitAffectingCombat) == "function" and UnitAffectingCombat("raid" .. i) then return true end
+    for i = 1, groupCount(GetNumRaidMembers) do
+        if combatOf("raid" .. i) then return true end
     end
     return false
 end
@@ -281,8 +358,8 @@ function module:ManageAspects(env)
     local _, _ = nil, nil
     -- Out of combat: Cheetah solo / Pack in group
     if not isGroupInCombat() then
-        local numParty = (type(GetNumPartyMembers) == "function" and GetNumPartyMembers()) or 0
-        local numRaid = (type(GetNumRaidMembers) == "function" and GetNumRaidMembers()) or 0
+        local numParty = groupCount(GetNumPartyMembers)
+        local numRaid = groupCount(GetNumRaidMembers)
         if numParty > 0 or numRaid > 1 then
             if not module.HasFamilyBuff("player", "AspectOfThePack") then
                 return module:Suggest(13159, "Utility")
@@ -315,6 +392,90 @@ function module:ManageAspects(env)
         end
     end
     return nil
+end
+
+-- ---------------------------------------------------------------------------
+-- Per-character rotation overrides (enabled / condition / filter).
+-- charDb.hunterRotation[specKey][nodeId] = { enabled=bool?, condition=string?,
+-- filter={axis=value}? } — merged over the declared defaults on every call.
+-- ---------------------------------------------------------------------------
+local function deepCopyNode(n)
+    local out = {}
+    for k, v in pairs(n) do
+        if k == "filter" and type(v) == "table" then
+            local f = {}
+            for fk, fv in pairs(v) do f[fk] = fv end
+            out.filter = f
+        else
+            out[k] = v
+        end
+    end
+    return out
+end
+
+local function rotationOverrides(specKey)
+    return module.charDb and module.charDb.hunterRotation and module.charDb.hunterRotation[specKey] or nil
+end
+
+function module:GetEffectiveNodes(specKey)
+    local spec = module.RotationSpecs and module.RotationSpecs[specKey]
+    if not spec then return nil end
+    local ov = rotationOverrides(specKey)
+    if not ov then return spec.nodes end
+    local out = {}
+    for _, base in ipairs(spec.nodes) do
+        local o = ov[base.id]
+        if o then
+            local n = deepCopyNode(base)
+            if o.enabled ~= nil then n.enabled = o.enabled end
+            if o.condition ~= nil then n.condition = o.condition end
+            if o.filter ~= nil then
+                if type(o.filter) == "table" and next(o.filter) then
+                    n.filter = o.filter
+                else
+                    n.filter = nil
+                end
+            end
+            out[#out + 1] = n
+        else
+            out[#out + 1] = base
+        end
+    end
+    return out
+end
+
+function module:SetNodeOverride(specKey, nodeId, key, value)
+    local charDb = module.charDb
+    if not charDb then return end
+    charDb.hunterRotation = charDb.hunterRotation or {}
+    charDb.hunterRotation[specKey] = charDb.hunterRotation[specKey] or {}
+    local ov = charDb.hunterRotation[specKey][nodeId]
+    if value == nil then
+        if ov then
+            ov[key] = nil
+            if not next(ov) then charDb.hunterRotation[specKey][nodeId] = nil end
+            if not next(charDb.hunterRotation[specKey]) then charDb.hunterRotation[specKey] = nil end
+        end
+        return
+    end
+    if not ov then ov = {}; charDb.hunterRotation[specKey][nodeId] = ov end
+    ov[key] = value
+end
+
+function module:ResetRotationOverrides(specKey)
+    if module.charDb and module.charDb.hunterRotation then
+        module.charDb.hunterRotation[specKey] = nil
+    end
+end
+
+function module.GetRotationDisabled(specKey)
+    local ov = rotationOverrides(specKey)
+    if not ov then return nil end
+    local m = {}
+    for id, o in pairs(ov) do
+        if o.enabled == false then m[id] = true end
+    end
+    return m
 end
 
 -- ---------------------------------------------------------------------------
@@ -357,14 +518,7 @@ function module:GetSuggestion()
     module.PendingSuggestion = nil
     pcall(module.HookActionButtonPress)
     if IsMounted and IsMounted() then return nil end
-    if type(UnitCastingInfo) == "function" then
-        local ok, n = pcall(UnitCastingInfo, "player")
-        if ok and n then return nil end
-    end
-    if type(UnitChannelInfo) == "function" then
-        local ok, n = pcall(UnitChannelInfo, "player")
-        if ok and n then return nil end
-    end
+    if isCastingSomething("player") then return nil end
 
     local env = module:BuildEnv()
 
@@ -376,10 +530,7 @@ function module:GetSuggestion()
         local mending = module.HasFamilyBuff("pet", "MendPet")
         local petHP = 100
         if type(UnitHealth) == "function" and type(UnitHealthMax) == "function" then
-            local hp, maxHp = UnitHealth("pet"), UnitHealthMax("pet")
-            if type(hp) == "number" and type(maxHp) == "number" and maxHp > 0 then
-                petHP = math.floor((hp / maxHp) * 100)
-            end
+            petHP = safePct(UnitHealth("pet"), UnitHealthMax("pet"))
         end
         if petHP < 70 and not mending then
             if module:TryFlash(136, "Utility", function() return true end, "Mend Pet", env) then
@@ -423,6 +574,21 @@ function module:GetSuggestion()
         if module:Suggest(75, "Damage") then return module.PendingSuggestion end
     end
     return nil
+end
+
+-- ---------------------------------------------------------------------------
+-- /cfa status helper
+-- ---------------------------------------------------------------------------
+function module:GetStatus()
+    local spec, source = self:DetectSpec()
+    local enabled = not (module.db and module.db.hunterEnabled == false)
+    local PT = (GetLocale and GetLocale() == "ptBR")
+    if PT then
+        return string.format("Hunter — spec %s (%s) — %s", tostring(spec), tostring(source),
+            enabled and "ligado" or "desligado")
+    end
+    return string.format("Hunter — spec %s (%s) — %s", tostring(spec), tostring(source),
+        enabled and "enabled" or "disabled")
 end
 
 -- ---------------------------------------------------------------------------
