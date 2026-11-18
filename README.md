@@ -1,5 +1,9 @@
 # Combat Forever Assistant
 
+<p align="center">
+  <img src="CombatForeverAssistantLOGO.jpg" alt="Combat Forever Assistant" width="900">
+</p>
+
 > **[English](#english)** · **[Português (ptBR)](#português-ptbr)**
 
 ---
@@ -33,7 +37,7 @@ control.
 > re-anchoring `addon.db` / `addon.charDb` to the real globals inside `ADDON_LOADED` (see
 > `memory/enciclopedia/12-savedvariables-e-persistencia.md` in the project archive).
 
-### Highlight modes (no glow, ever)
+### Highlight modes
 
 - **Circle** — a dashed colored ring around the recommended button (native textures).
 - **Border** — a colored frame around the button (4 edge bars, 0–60 px wide).
@@ -81,7 +85,7 @@ Ele **não** aperta a tecla por você — apenas destaca o botão. Você continu
 > `ADDON_LOADED` (veja `memory/enciclopedia/12-savedvariables-e-persistencia.md` no
 > arquivo do projeto).
 
-### Modos de destaque (sem glow, nunca)
+### Modos de destaque
 
 - **Círculo** — anel segmentado colorido em volta do botão (texturas nativas).
 - **Moldura** — moldura colorida em volta do botão (4 barras, 0–60 px de largura).
