@@ -19,6 +19,7 @@ control.
 | Area | State |
 |---|---|
 | Addon loads, `/cfa` menu (General / Key button / About) | Working (tested in game) |
+| Menu settings persist — fixes the orphan-table bug where changes were written to a table detached from the SV global | Corrected (user-authored fix) — not yet verified in game |
 | Highlight: **circle** or **border** modes | Working (tested in game) |
 | Border width slider (0–60 px), single-color option, per-function colors | Working (tested in game) |
 | Key button (draggable widget showing the bound key, lock option, "always show", 6 fonts, size, background/text color, transparency, reset) | Working (tested in game) |
@@ -26,9 +27,11 @@ control.
 | Class modules (Hunter, Shaman, Warrior, Druid, Paladin) | **Not implemented yet** — zero rotation logic shipped so far |
 | Visual rotation editor | Planned (Phase 3) |
 
-> **Saved variables:** on the current Forever client, `/reload` does **not** flush addon
-> SavedVariables. Settings only persist when you **fully exit the client**. This affects
-> every configuration change made in the menu.
+> **Saved variables:** settings persist on `/reload` (and on logout/clean exit), like any
+> Blizzard client. An earlier bug made menu changes persist nowhere: `addon.db` was bound
+> to a table created at load time instead of the global the client writes to. Fixed by
+> re-anchoring `addon.db` / `addon.charDb` to the real globals inside `ADDON_LOADED` (see
+> `memory/enciclopedia/12-savedvariables-e-persistencia.md` in the project archive).
 
 ### Highlight modes (no glow, ever)
 
@@ -63,6 +66,7 @@ Ele **não** aperta a tecla por você — apenas destaca o botão. Você continu
 | Área | Estado |
 |---|---|
 | Addon carrega, menu `/cfa` (Geral / Botão de tecla / Sobre) | Funcionando (testado em jogo) |
+| Configurações do menu persistem — corrige o bug da tabela órfã (mudanças iam para uma tabela desconectada do global de SV) | Corrigido (correção do usuário) — ainda não verificado em jogo |
 | Destaque: **círculo** ou **moldura** | Funcionando (testado em jogo) |
 | Slider de largura da moldura (0–60 px), cor única, cores por função | Funcionando (testado em jogo) |
 | Botão de tecla (widget arrastável mostrando a tecla, trava, "sempre exibir", 6 fontes, tamanho, cor de fundo/texto, transparência, restaurar padrões) | Funcionando (testado em jogo) |
@@ -70,9 +74,12 @@ Ele **não** aperta a tecla por você — apenas destaca o botão. Você continu
 | Módulos de classe (Hunter, Shaman, Warrior, Druid, Paladin) | **Ainda não implementados** — zero rotação no pacote |
 | Editor visual de rotação | Planejado (Fase 3) |
 
-> **Variáveis salvas:** no cliente Forever atual, `/reload` **não** despeja as
-> SavedVariables. As configurações só persistem quando você **sai completamente do jogo**.
-> Isso vale para toda mudança feita no menu.
+> **Variáveis salvas:** as configurações persistem no `/reload` (e no logout/saída limpa),
+> como em qualquer cliente Blizzard. Um bug anterior fazia as mudanças sumirem: `addon.db`
+> ficava ligado a uma tabela criada ao carregar o arquivo, não ao global que o client
+> grava. Corrigido re-ancorando `addon.db` / `addon.charDb` aos globals reais dentro do
+> `ADDON_LOADED` (veja `memory/enciclopedia/12-savedvariables-e-persistencia.md` no
+> arquivo do projeto).
 
 ### Modos de destaque (sem glow, nunca)
 

@@ -7,7 +7,6 @@ local MinimapButton = {}
 addon.Minimap = MinimapButton
 
 local frame
-local db = addon.charDb
 
 local function createFrame()
     frame = CreateFrame("Button", "CFA_MinimapButton", Minimap)
@@ -26,10 +25,9 @@ local function createFrame()
     frame.ring = addon.Visuals and addon.Visuals.DashRing(frame, 16, 2.5, { 1.0, 0.55, 0.10 }, 12)
         or nil -- Visuals always loads before this file; fallback kept for safety
 
-    local ANGLE = db.minimapAngle or 210
-
     local function position()
-        local rad = math.rad(ANGLE)
+        local angle = (addon.charDb and addon.charDb.minimapAngle) or 210
+        local rad = math.rad(angle)
         local x = math.cos(rad) * 80
         local y = math.sin(rad) * 80
         frame:SetPoint("CENTER", Minimap, "CENTER", x, y)
@@ -46,8 +44,8 @@ local function createFrame()
         local scale = UIParent:GetEffectiveScale()
         mx, my = mx / scale, my / scale
         if cx and cy then
-            ANGLE = math.deg(math.atan2(my - cy, mx - cx))
-            db.minimapAngle = ANGLE
+            local angle = math.deg(math.atan2(my - cy, mx - cx))
+            if addon.charDb then addon.charDb.minimapAngle = angle end
             position()
         end
     end)
@@ -58,8 +56,8 @@ local function createFrame()
             local scale = UIParent:GetEffectiveScale()
             mx, my = mx / scale, my / scale
             if cx and cy then
-                ANGLE = math.deg(math.atan2(my - cy, mx - cx))
-                db.minimapAngle = ANGLE
+                local angle = math.deg(math.atan2(my - cy, mx - cx))
+                if addon.charDb then addon.charDb.minimapAngle = angle end
                 position()
             end
         end

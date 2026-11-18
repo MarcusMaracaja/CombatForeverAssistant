@@ -8,11 +8,6 @@ _G[addonName] = addon
 CFA = addon
 local L = addon.L
 
-CombatForeverAssistantDB = CombatForeverAssistantDB or {}
-CombatForeverAssistantCharDB = CombatForeverAssistantCharDB or {}
-addon.db = CombatForeverAssistantDB
-addon.charDb = CombatForeverAssistantCharDB
-
 -- Defaults (filled lazily so old settings survive schema changes).
 local defaults = {
     visualMode = "circle",      -- "circle" | "border"
@@ -28,9 +23,26 @@ local defaults = {
     warnOutdated = true,
     RotationEditor = {},
 }
-for k, v in pairs(defaults) do
-    if addon.db[k] == nil then addon.db[k] = v end
+
+local function initDB()
+    if type(CombatForeverAssistantDB) ~= "table" then
+        CombatForeverAssistantDB = {}
+    end
+    if type(CombatForeverAssistantCharDB) ~= "table" then
+        CombatForeverAssistantCharDB = {}
+    end
+    addon.db = CombatForeverAssistantDB
+    addon.charDb = CombatForeverAssistantCharDB
+
+    for k, v in pairs(defaults) do
+        if addon.db[k] == nil then
+            addon.db[k] = v
+        end
+    end
 end
+
+-- Initialize fallback tables at load time so other files don't fail before ADDON_LOADED
+initDB()
 
 addon.modules = {}
 addon.activeModule = nil
@@ -57,8 +69,11 @@ local function playerCanRun()
     return UnitExists("player") and not UnitIsDeadOrGhost("player")
 end
 
-frame:SetScript("OnEvent", function(_, event, ...)
-    if event == "PLAYER_LOGIN" then
+frame:SetScript("OnEvent", function(_, event, arg1, ...)
+    if event == "ADDON_LOADED" and arg1 == addonName then
+        initDB()
+    elseif event == "PLAYER_LOGIN" then
+        initDB()
         addon.activeModule = addon:GetModuleForPlayer()
         if addon.activeModule and addon.activeModule.OnEnable then
             pcall(addon.activeModule.OnEnable, addon.activeModule)
@@ -76,6 +91,7 @@ frame:SetScript("OnEvent", function(_, event, ...)
         -- entering combat: nothing special yet
     end
 end)
+frame:RegisterEvent("ADDON_LOADED")
 frame:RegisterEvent("PLAYER_LOGIN")
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 frame:RegisterEvent("SPELLS_CHANGED")
