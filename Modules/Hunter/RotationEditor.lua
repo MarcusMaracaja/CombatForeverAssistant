@@ -411,7 +411,7 @@ local function createCard(parent, specKey, node, y)
         local disabled = (cur.enabled == false)
         cb:SetChecked(not disabled)
         cardDesaturate(iconBtn, disabled)
-        nameFS:SetText((disabled and "|cff888888" or ("|c" .. hex)) .. (node.name or node.id) .. "|r")
+        nameFS:SetText((disabled and "|cff888888" or ("|cff" .. hex)) .. (node.name or node.id) .. "|r")
         condFS:SetText(NodeConditionText(cur))
     end
 

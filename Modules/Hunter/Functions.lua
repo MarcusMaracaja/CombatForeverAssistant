@@ -84,7 +84,12 @@ function module.CheckCastable(z)
         local ok, dead = pcall(UnitIsDeadOrGhost, "target")
         if ok and dead then return false end
     end
-    if not module.SpellKnown(name) then return false end
+    -- known? (any rank of the family counts) — ID-first, name fallback
+    if z.SpellID and module.Compat and module.Compat.SpellKnown then
+        if not module.Compat.SpellKnown(z.SpellID) then return false end
+    elseif not module.SpellKnown(name) then
+        return false
+    end
     if module.IsOnCooldown(name, z.SpellID) then return false end
     return true
 end

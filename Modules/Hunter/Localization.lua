@@ -42,10 +42,7 @@ module.UnitTargetExistsAndAttackable = function()
     local ok, dead = pcall(UnitIsDeadOrGhost, "target")
     if ok and dead then return false end
     local ok2, canAttack = pcall(UnitCanAttack, "player", "target")
-    if not ok2 then
-        if _G.issecretvalue and issecretvalue(ok2) then return true end
-        return false
-    end
+    if not ok2 then return true end -- fail-open: never starve the rotation for an unreadable probe
     if _G.issecretvalue and issecretvalue(canAttack) then return true end
     return canAttack and true or false
 end

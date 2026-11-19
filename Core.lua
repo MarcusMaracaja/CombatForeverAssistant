@@ -157,6 +157,85 @@ end)
 -- ---------------------------------------------------------------------------
 addon.Compat = {}
 
+-- ---------------------------------------------------------------------------
+-- Spell rank families (data facts: rank IDs of vanilla spells).
+-- "Known" = any rank of the family known — the client only knows the CURRENT
+-- rank, so a rank-1 ID on a rotation node must still count as known.
+-- (Hunter entries verified against the Forever tuning data, 2026-11.)
+-- ---------------------------------------------------------------------------
+local FAMILIES = {
+    { 3044, 14281, 14282, 14283, 14284, 14285, 14286, 14287 }, -- Arcane Shot
+    { 19434, 20900, 20901, 20902, 20903, 20904 },               -- Aimed Shot
+    { 1978, 13549, 13550, 13551, 13552, 13553, 13554, 13555, 25295 }, -- Serpent Sting
+    { 1130, 14323, 14324, 14325, 1213268 },                     -- Hunter's Mark
+    { 2973, 14260, 14261, 14262, 14263, 14264, 14265, 14266 },  -- Raptor Strike
+    { 1495, 14269, 14270, 14271 },                              -- Mongoose Bite
+    { 2974, 1310180, 14267, 14268 },                            -- Wing Clip
+    { 13165, 14318, 14319, 14320, 14321, 14322, 25296 },        -- Aspect of the Hawk
+    { 13161, 1299445, 1299446, 1299447 },                       -- Aspect of the Beast
+    { 13795, 14302, 14303, 14304, 14305 },                      -- Immolation Trap
+    { 13813, 14310, 14311, 14312 },                             -- Explosive Trap
+}
+local familyOf = {}
+for _, fam in ipairs(FAMILIES) do
+    for _, id in ipairs(fam) do familyOf[id] = fam end
+end
+addon.Compat.FamilyOf = familyOf
+
+-- direct "known" check by ID (client exposes C_SpellBook.IsSpellKnown[OrInSpellBook])
+local _knownIDCache = {}
+function addon.Compat.IsSpellKnownID(id)
+    if type(id) ~= "number" then return false end
+    if _knownIDCache[id] ~= nil then return _knownIDCache[id] end
+    if C_SpellBook and type(C_SpellBook.IsSpellKnownOrInSpellBook) == "function" then
+        local ok, known = pcall(C_SpellBook.IsSpellKnownOrInSpellBook, id)
+        if ok then _knownIDCache[id] = known == true and true or false return _knownIDCache[id] end
+    end
+    if C_SpellBook and type(C_SpellBook.IsSpellKnown) == "function" then
+        local ok, known = pcall(C_SpellBook.IsSpellKnown, id)
+        if ok then _knownIDCache[id] = known == true and true or false return _knownIDCache[id] end
+    end
+    -- last resort: spellbook scan (only used if the direct API is missing
+    _knownIDCache[id] = true  -- be generous: don't block the rotation for lack of a probe
+    return true
+end
+
+-- "does the player know this spell?" (any rank of its family)
+function addon.Compat.SpellKnown(id)
+    if type(id) ~= "number" then return false end
+    local fam = familyOf[id]
+    if fam then
+        for i = #fam, 1, -1 do
+            if addon.Compat.IsSpellKnownID(fam[i]) then return true end
+        end
+        return false
+    end
+    return addon.Compat.IsSpellKnownID(id)
+end
+
+-- Highest known rank of the family; nil when nothing in the family is known.
+local _highestKnownCache = {}
+function addon.Compat.HighestKnownSpellID(id)
+    if type(id) ~= "number" then return nil end
+    if _highestKnownCache[id] then return _highestKnownCache[id] end
+    local fam = familyOf[id]
+    if fam then
+        for i = #fam, 1, -1 do
+            if addon.Compat.IsSpellKnownID(fam[i]) then
+                _highestKnownCache[id] = fam[i]
+                return fam[i]
+            end
+        end
+        return nil
+    end
+    -- no family: direct check on the exact ID
+    if addon.Compat.IsSpellKnownID(id) then
+        _highestKnownCache[id] = id
+        return id
+    end
+    return nil
+end
+
 function addon.Compat.SpellInfoByID(id)
     if C_Spell and C_Spell.GetSpellInfo then
         local ok, info = pcall(C_Spell.GetSpellInfo, id)
@@ -188,47 +267,6 @@ function addon.Compat.SpellBookItem(i, bookType)
 end
 
 -- Highest rank the player actually knows for a spellID (same base name).
--- Cached per id for the session.
-local _highestKnownCache = {}
-function addon.Compat.HighestKnownSpellID(id)
-    if not id then return nil end
-    if _highestKnownCache[id] then return _highestKnownCache[id] end
-    local base = nil
-    if addon.Compat.SpellInfoByID then
-        local name = addon.Compat.SpellInfoByID(id)
-        if name then base = name:gsub("%s*%b()%s*$", "") end
-    end
-    if not base then
-        _highestKnownCache[id] = id
-        return id
-    end
-    local bestID, bestRank = id, 0
-    for i = 1, 300 do
-        local name, rank = addon.Compat.SpellBookItem(i, "spell")
-        if name == nil then break end
-        local nBase = name:gsub("%s*%b()%s*$", "")
-        if nBase == base then
-            local entryID = nil
-            if C_SpellBook and C_SpellBook.GetSpellBookItemInfo then
-                local ok, info = pcall(C_SpellBook.GetSpellBookItemInfo, i, "spell")
-                if ok and type(info) == "table" then entryID = info.identifier or info.spellID end
-            end
-            if not entryID and type(GetSpellLink) == "function" then
-                local ok, link = pcall(GetSpellLink, i, "spell")
-                if ok and type(link) == "string" then
-                    entryID = tonumber(link:match("spell:(%d+)"))
-                end
-            end
-            local rankNum = tonumber((tostring(rank or ""):match("%d+"))) or 0
-            if entryID and (rankNum > bestRank or (rankNum == bestRank and not entryID)) then
-                bestID, bestRank = entryID, rankNum
-            end
-        end
-    end
-    _highestKnownCache[id] = bestID
-    return bestID
-end
-
 -- ---------------------------------------------------------------------------
 -- Outdated-rank warning (chat, at login) — best effort; silently no-ops if the
 -- client exposes no rank info.
