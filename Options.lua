@@ -46,6 +46,12 @@ local function createPanel()
     frame:SetFrameStrata("DIALOG")
     frame:EnableMouse(true)
     applyBackdrop(frame, BG[1], BG[2], BG[3], BG[4])
+    -- belt-and-suspenders: explicit solid background (works even if the
+    -- client's backdrop path silently no-ops)
+    local solidBg = frame:CreateTexture(nil, "BACKGROUND")
+    solidBg:SetTexture("Interface\\Buttons\\WHITE8X8")
+    solidBg:SetVertexColor(BG[1], BG[2], BG[3], 1)
+    solidBg:SetAllPoints()
     if addon.db.posX and addon.db.posY then
         frame:ClearAllPoints()
         frame:SetPoint("CENTER", UIParent, "CENTER", addon.db.posX, addon.db.posY)

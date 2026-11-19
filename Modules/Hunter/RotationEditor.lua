@@ -119,11 +119,16 @@ local picker = nil
 
 local function GetPicker()
     if picker then return picker end
-    picker = CreateFrame("Frame", "CFA_HunterRotationPicker", UIParent, "BackdropTemplate")
+    -- parented to the editor window: hides/moves with it, always above its cards
+    picker = CreateFrame("Frame", "CFA_HunterRotationPicker", frame or UIParent, "BackdropTemplate")
     picker:SetWidth(250)
     picker:SetFrameStrata("TOOLTIP")
     picker:EnableMouse(true)
-    applyBackdrop(picker, 0.04, 0.04, 0.04, 0.97)
+    applyBackdrop(picker, 0.04, 0.04, 0.04, 1.0)
+    local solidBg = picker:CreateTexture(nil, "BACKGROUND")
+    solidBg:SetTexture("Interface\\Buttons\\WHITE8X8")
+    solidBg:SetVertexColor(0.04, 0.04, 0.04, 1.0)
+    solidBg:SetAllPoints()
     picker.rows = {}
     local title = picker:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
     title:SetPoint("TOPLEFT", 10, -8)
@@ -132,6 +137,14 @@ local function GetPicker()
     local sf = CreateFrame("ScrollFrame", nil, picker, "UIPanelScrollFrameTemplate")
     sf:SetPoint("TOPLEFT", 8, -26)
     sf:SetPoint("BOTTOMRIGHT", -28, 8)
+    sf:EnableMouseWheel(true)
+    sf:SetScript("OnMouseWheel", function(self, delta)
+        local cur = self:GetVerticalScroll() or 0
+        local childH = picker.child and picker.child:GetHeight() or 0
+        local visible = self:GetHeight() or 0
+        local maxScroll = math.max(0, childH - visible)
+        self:SetVerticalScroll(math.max(0, math.min(maxScroll, cur - (delta > 0 and 30 or -30))))
+    end)
     picker.scroll = sf
     local child = CreateFrame("Frame", nil, sf)
     child:SetWidth(212)
@@ -177,7 +190,7 @@ local function RebuildPickerRows(p, titleText, getItems, afterAction)
         p.rows[#p.rows + 1] = row
     end
     p.child:SetHeight(math.max(1, -y))
-    p:SetHeight(math.min(320, math.max(64, 34 + math.max(1, -y))))
+    p:SetHeight(math.min(400, math.max(64, 34 + math.max(1, -y))))
 end
 
 local function ShowPicker(anchorBtn, titleText, getItems, afterAction)
@@ -436,6 +449,13 @@ local function createPanel()
     frame:SetFrameStrata("DIALOG")
     frame:EnableMouse(true)
     applyBackdrop(frame, BG[1], BG[2], BG[3], BG[4])
+    -- explicit solid background (see Options.lua: backdrop may silently no-op)
+    local solidBg = frame:CreateTexture(nil, "BACKGROUND")
+    solidBg:SetTexture("Interface\\Buttons\\WHITE8X8")
+    solidBg:SetVertexColor(BG[1], BG[2], BG[3], 1)
+    solidBg:SetAllPoints()
+    -- closing the editor also dismisses the floating picker menu
+    frame:SetScript("OnHide", function() if picker then picker:Hide() end end)
 
     -- Drag bar
     local drag = CreateFrame("Frame", nil, frame)

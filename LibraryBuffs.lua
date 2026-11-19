@@ -7,15 +7,19 @@
 --     CFA.BuffLib:GetAll(unit)                  -> array of { family, tier, maxTier, outdated }
 --     CFA.BuffLib:ClassIndexOf(classTag)        -> stable numeric index
 --
--- ⚠️ Critical vanilla fact: UnitBuff/UnitDebuff report the **aura** spell ID (dbc cat 0),
--- NOT necessarily the cast ID. Entries may carry two lists:
+-- ⚠️ Critical vanilla fact: `UnitBuff`/`UnitDebuff` do NOT exist on WoW Forever.
+-- Auras are read via `C_UnitAuras.GetAuraDataByIndex` and the numeric ID reported
+-- is the **aura** spell ID (dbc cat 0), NOT necessarily the cast ID. Entries may
+-- carry two lists:
 --   auras = { ... }   -> scanned first when present (verified on wowhead classic tooltips)
 --   ranks = { ... }   -> cast spell IDs; used as fallback scan list when auras are absent
 -- Localized clients still return the same numeric IDs; name matching is never required.
+-- In combat the aura payload may be *secret*; unreadable entries are skipped
+-- (fail-safe: "not present") rather than crash.
 --
 -- Totems are NOT auras on the totem's owner. The buff the player RECEIVES from a totem
 -- uses its own aura IDs (e.g. Strength of Earth aura 8076), and those are what we scan.
--- Weapon enchants are NOT UnitBuff auras: detect via GetWeaponEnchantInfo() (see `enchants`).
+-- Weapon enchants are NOT auras: detect via GetWeaponEnchantInfo() (see `enchants`).
 --
 -- Families group single-target and party-wide variants of the same buff; `tierBase`
 -- aligns their power tiers.
@@ -278,37 +282,46 @@ end
 BuffLib.entries = E
 BuffLib.FamilyMaxTier = familyMax
 
--- WoW Forever (modern engine): UnitBuff/UnitDebuff's spellID is expected at return
--- position 10 (retail-style). If that assumption is wrong, scanning finds nothing and
--- BuffLib-gated suggestions silently no-op. Run in game to confirm:
---   /dump select(10, UnitBuff("player", 1))
--- (or dump all returns and see which position is the number that looks like a spellID)
-local SPELL_ID_POSITION = 10
+-- WoW Forever (modern engine): UnitBuff/UnitDebuff do NOT exist — auras come
+-- from C_UnitAuras.GetAuraDataByIndex(unit, i, filter). In combat the aura
+-- payload may be *secret*; we skip unreadable entries (fail-safe: "unknown").
+-- Anything we cannot read simply leaves BuffLib answering "not present".
+local AURA_FILTERS = { "HELPFUL", "HARMFUL" }
+
+local function auraSpellID(aura)
+    if type(aura) ~= "table" then return nil end
+    local id = aura.spellId or aura.spellID or aura.auraSpellId or aura.auraSpellID
+    if id == nil then return nil end
+    if _G.issecretvalue and issecretvalue(id) then return nil end
+    return tonumber(id)
+end
+
+-- pcall-wrapped aura walk; returns (list, readable)
+local function auraWalk(unit, filter)
+    local out = {}
+    if not (C_UnitAuras and type(C_UnitAuras.GetAuraDataByIndex) == "function") then
+        return out, false
+    end
+    for i = 1, 40 do
+        local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, filter)
+        if not ok then return out, false end
+        if aura == nil then return out, true end -- full sweep
+        if type(aura) ~= "table" then return out, false end
+        out[#out + 1] = aura
+    end
+    return out, true
+end
 
 local function scan(unit, harvest)
-    local i = 1
-    while true do
-        local returns = { UnitBuff(unit, i) }
-        local name = returns[1]
-        if not name then break end
-        local spellID = tonumber(returns[SPELL_ID_POSITION])
-        if spellID and bySpellID[spellID] then
-            local hit = bySpellID[spellID]
-            harvest(hit.entryIndex, hit.tier, spellID)
+    for _, filter in ipairs(AURA_FILTERS) do
+        local list = auraWalk(unit, filter)
+        for _, aura in ipairs(list) do
+            local spellID = auraSpellID(aura)
+            if spellID and bySpellID[spellID] then
+                local hit = bySpellID[spellID]
+                harvest(hit.entryIndex, hit.tier, spellID)
+            end
         end
-        i = i + 1
-    end
-    i = 1
-    while true do
-        local returns = { UnitDebuff(unit, i) }
-        local name = returns[1]
-        if not name then break end
-        local spellID = tonumber(returns[SPELL_ID_POSITION])
-        if spellID and bySpellID[spellID] then
-            local hit = bySpellID[spellID]
-            harvest(hit.entryIndex, hit.tier, spellID)
-        end
-        i = i + 1
     end
 end
 

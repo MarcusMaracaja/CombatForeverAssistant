@@ -113,7 +113,12 @@ frame:SetScript("OnUpdate", function(_, delta)
         addon.Visuals.Show(addon.Visuals.flashSpell, addon.Visuals.flashColor or "Utility")
         return
     elseif addon.Visuals then
+        -- flash expired: make sure nothing stays lit
         addon.Visuals.flashSpell, addon.Visuals.flashUntil = nil, nil
+        if addon.Visuals.Hide then addon.Visuals.Hide() end
+        if addon.KeyButton then
+            if addon.db.keyButtonAlways then addon.KeyButton.ShowPlaceholder() else addon.KeyButton.Hide() end
+        end
     end
     local ok, suggestion = pcall(mod.GetSuggestion, mod)
     if not ok then
@@ -411,6 +416,10 @@ function addon:FlashSpell(spellID, color, duration)
     addon.Visuals.flashSpell = known
     addon.Visuals.flashUntil = GetTime() + duration
     addon.Visuals.flashColor = color or "Utility"
+    -- show the key button too while the test-flash is on
+    if addon.KeyButton and addon.db.keyButton then
+        addon.KeyButton.ShowFor(known)
+    end
     return true
 end
 
