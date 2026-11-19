@@ -27,11 +27,25 @@ control.
 | Highlight: **circle** or **border** modes | Working (tested in game) |
 | Border width slider (0–60 px), single-color option, per-function colors | Working (tested in game) |
 | Key button (draggable widget showing the bound key, lock option, "always show", 6 fonts, size, background/text color, transparency, reset) | Working (tested in game) |
-| **Buff library** (`CFA.BuffLib`) — all 9 vanilla classes, all ranks, aura/cast IDs, tier tracking, "outdated buff" flags | Implemented, data verified via wowhead classic/classicdb/wiki — **not yet verified in game** |
-| **Hunter class module (SV / BM / MM)** — declarative rotation (nodes: Serpent Sting, Aimed/Arcane Shot, Wing Clip, traps, aspects…), spec detection via C_Traits + override, Castable engine + aura beliefs | Implemented (not yet verified in game) — load validated; runtime test pending |
-| **Rotation editor window** (per-character node toggles, per-node conditions/filters via 6 cascade axes + special predicates, icon-click flash test, BM/MM/SV tabs, reset-to-default) | Implemented (not yet verified in game) |
-| Login welcome (class / spec + detection source / race greeting) | Implemented (not yet verified in game) |
+| **Buff library** (`CFA.BuffLib`) — all 9 vanilla classes, all ranks, aura/cast IDs, tier tracking | Implemented — **aura reads rewritten to `C_UnitAuras.GetAuraDataByIndex`** (H-0185): `UnitBuff`/`UnitDebuff` don't exist on Forever; **not yet verified in game** |
+| **Hunter class module (SV / BM / MM)** — declarative rotation, spec detection via **C_Traits ordinals** (tested in game: `spec: C_Traits F=0 M=0 S=10`), Castable engine + aura beliefs + persistent aspect belief | Implemented — spec detection verified in game; combat rotation unblocked (spellbook probe fixed, H-0187) — **full runtime test pending** |
+| **Rotation editor window** (per-character node toggles, per-node conditions/filters via 6 cascade axes + special predicates, icon-click flash test, `^`/`v` reorder, BM/MM/SV tabs, reset-to-default) | Implemented — color codes fixed (H-0186/0187) — **not yet verified in game** |
+| Login welcome (spec bless + spec + detection source + race greeting) | Working (tested in game — prints on first tick) |
 | Class modules (Shaman, Warrior, Druid, Paladin) | **Not implemented yet** — next phases |
+
+### Development log (2026-11-17/18)
+
+- **H-0178** — SavedVariables never persisted (orphan table) — user-authored fix via `ADDON_LOADED` re-anchoring.
+- **H-0179/0180/0181/0182** — official logo, minimap button, addon-list icon, source art.
+- **H-0183/0184** — Hunter module (SV/BM/MM declarative rotation) + rotation editor;
+  silent rotation crash fixed (secret numbers, `duration` global, `checked` flag).
+- **H-0185** — `UnitBuff`/`UnitDebuff` don't exist → BuffLib crash every tick; rewritten
+  to `C_UnitAuras`; opaque panels; flash shows Key Button and turns off properly.
+- **H-0186** — 6 user-reported bugs: spec by `treeIDs` ordinal, persistent aspect belief
+  (rotation starvation), picker floating/cut off, `|c` prefix, `^`/`v` reorder, ESC closes.
+- **H-0187** — rotation dead again: spellbook scan (`GetSpellBookItemInfo`) doesn't respond
+  on this client → "known" now via `C_SpellBook.IsSpellKnownOrInSpellBook` + rank-family
+  table (Hunter); castable decisions by ID; color codes fully fixed.
 
 > **Saved variables:** settings persist on `/reload` (and on logout/clean exit), like any
 > Blizzard client. An earlier bug made menu changes persist nowhere: `addon.db` was bound
@@ -95,11 +109,25 @@ Ele **não** aperta a tecla por você — apenas destaca o botão. Você continu
 | Destaque: **círculo** ou **moldura** | Funcionando (testado em jogo) |
 | Slider de largura da moldura (0–60 px), cor única, cores por função | Funcionando (testado em jogo) |
 | Botão de tecla (widget arrastável mostrando a tecla, trava, "sempre exibir", 6 fontes, tamanho, cor de fundo/texto, transparência, restaurar padrões) | Funcionando (testado em jogo) |
-| **Biblioteca de buffs** (`CFA.BuffLib`) — as 9 classes vanilla, todos os ranks, IDs de aura/cast, tiers, aviso de buff desatualizado | Implementada, dados verificados via wowhead classic/classicdb/wiki — **ainda não verificada em jogo** |
-| **Módulo Hunter (SV / BM / MM)** — rotação declarativa (Serpent Sting, Aimed/Arcane Shot, Wing Clip, armadilhas, aspectos…), detecção de spec via C_Traits + override, engine de Castable + crenças de aura | Implementado (ainda não verificado em jogo) — load validado; teste em jogo pendente |
-| **Janela de edição de rotação** (liga/desliga nós por personagem, condições/filtros por nó via 6 eixos de filtro + predicados especiais, clique no ícone para testar o flash, abas BM/MM/SV, restaurar padrão) | Implementada (ainda não verificada em jogo) |
-| Boas-vindas no login (classe / spec + origem da detecção / saudação racial) | Implementada (ainda não verificada em jogo) |
+| **Biblioteca de buffs** (`CFA.BuffLib`) — as 9 classes vanilla, todos os ranks, IDs de aura/cast, tiers, aviso de buff desatualizado | Implementada — **leitura de auras reescrita para `C_UnitAuras.GetAuraDataByIndex`** (H-0185): `UnitBuff`/`UnitDebuff` não existem no Forever; **ainda não verificada em jogo** |
+| **Módulo Hunter (SV / BM / MM)** — rotação declarativa, detecção de spec via **ordinals de `treeIDs` do C_Traits** (testada em jogo: `spec: C_Traits F=0 M=0 S=10`), engine de Castable + crenças de aura + crença de aspecto persistente | Implementado — detecção de spec verificada em jogo; rotação do combate desbloqueada (probe do spellbook corrigido, H-0187) — **teste em jogo completo pendente** |
+| **Janela de edição de rotação** (liga/desliga nós por personagem, condições/filtros por nó via 6 eixos de filtro + predicados especiais, clique no ícone para testar o flash, `^`/`v` reordenar, abas BM/MM/SV, restaurar padrão) | Implementada — códigos de cor corrigidos (H-0186/0187) — **ainda não verificada em jogo** |
+| Boas-vindas no login (bênção da spec + spec + origem da detecção + saudação racial) | Funcionando (testada em jogo — imprime no primeiro tick) |
 | Módulos de classe (Shaman, Warrior, Druid, Paladin) | **Ainda não implementados** — próximas fases |
+
+### Log de desenvolvimento (2026-11-17/18)
+
+- **H-0178** — SavedVariables nunca persistem (tabela órfã) — correção do usuário via re-âncora no `ADDON_LOADED`.
+- **H-0179/0180/0181/0182** — logo oficial, botão do minimapa, ícone na lista de addons, arte-fonte.
+- **H-0183/0184** — módulo Hunter (rotação declarativa SV/BM/MM) + editor de rotação; rotação morta em silêncio
+  corrigida (números secret, global `duration`, flag `checked` do `UnitDistanceSquared`).
+- **H-0185** — `UnitBuff`/`UnitDebuff` não existem no Forever → BuffLib estourava todo tick; reescrito para
+  `C_UnitAuras`; painéis opacos; flash mostra o botão de tecla e apaga de verdade.
+- **H-0186** — 6 bugs do usuário: spec por ordinal de `treeIDs`, crença de aspecto persistente
+  (a rotação starveava), picker cortado/flutuando, prefixo `|c`, botões `^`/`v`, ESC fecha.
+- **H-0187** — rotação morta de novo: a varredura do spellbook (`GetSpellBookItemInfo`) não responde neste
+  cliente → "conhecido" agora via `C_SpellBook.IsSpellKnownOrInSpellBook` + tabela FAMILIES de ranks do Hunter;
+  decisões de castable por ID; códigos de cor definitivamente corrigidos.
 
 > **Variáveis salvas:** as configurações persistem no `/reload` (e no logout/saída limpa),
 > como em qualquer cliente Blizzard. Um bug anterior fazia as mudanças sumirem: `addon.db`
