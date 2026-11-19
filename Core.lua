@@ -83,7 +83,6 @@ frame:SetScript("OnEvent", function(_, event, arg1, ...)
             pcall(addon.CheckOutdatedRanks, addon)
         end
         if addon.Minimap then addon.Minimap.Refresh() end
-        pcall(addon.PrintWelcome, addon)
     elseif event == "PLAYER_ENTERING_WORLD" then
         if addon.Visuals then addon.Visuals.RefreshMap() end
     elseif event == "SPELLS_CHANGED" or event == "UPDATE_BINDINGS"
@@ -106,6 +105,10 @@ frame:SetScript("OnUpdate", function(_, delta)
     if elapsed < TICK then return end
     elapsed = 0
     if not playerCanRun() then return end
+    if not addon.welcomeSent then
+        addon.welcomeSent = true
+        pcall(addon.PrintWelcome, addon)
+    end
     local mod = addon.activeModule
     if not mod or not mod.GetSuggestion then return end
     -- Test-flash (icon click in the editor / /cfa test) wins over the rotation
@@ -458,12 +461,25 @@ function addon:GetRaceGreeting()
 end
 
 function addon:PrintWelcome()
-    local className = UnitClass("player")
-    print(string.format(addon.L["welcome_loaded"], tostring(className)))
+    local _, className = UnitClass("player")
     local mod = addon.activeModule
+    local spec, source
     if mod and type(mod.DetectSpec) == "function" then
-        local ok, spec, source = pcall(mod.DetectSpec, mod)
-        if ok and spec then
+        local ok, s, src = pcall(mod.DetectSpec, mod)
+        if ok then spec, source = s, src end
+    end
+
+    local tag = "|cff33ff99[CFA]|r "
+    if className == "HUNTER" or (mod and mod.classTag == "HUNTER") then
+        local blessKey = spec and ("bless_" .. spec:lower()) or "bless_low"
+        local bless = addon.L[blessKey] or addon.L["bless_sv"]
+        print(tag .. bless)
+        local specName = addon.L["spec_" .. (spec and spec:lower() or "sv")] or spec or "Survival"
+        print(tag .. "|cFFCCCCCCspec:|r " .. tostring(source or "auto") .. " (" .. tostring(specName) .. ")")
+    else
+        local classLoc = UnitClass("player")
+        print(string.format(addon.L["welcome_loaded"], tostring(classLoc)))
+        if spec then
             local specName = addon.L["spec_" .. spec:lower()] or spec
             print(string.format(addon.L["welcome_spec"], tostring(specName), tostring(source or "?")))
         end

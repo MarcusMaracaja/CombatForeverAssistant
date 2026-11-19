@@ -16,6 +16,7 @@ local frame, scrollChild
 local tabButtons = {}
 local currentSpec = "SV"
 local cardFrames = {}
+local selectSpec  -- forward declaration (card buttons re-render the tab)
 
 local PANEL_W, PANEL_H = 560, 440
 local ROW_H = 46
@@ -150,6 +151,7 @@ local function GetPicker()
     child:SetWidth(212)
     sf:SetScrollChild(child)
     picker.child = child
+    if type(UISpecialFrames) == "table" then tinsert(UISpecialFrames, "CFA_HunterRotationPicker") end
     return picker
 end
 
@@ -162,7 +164,7 @@ local function RebuildPickerRows(p, titleText, getItems, afterAction)
         local row = CreateFrame(item.header and "Frame" or "Button", nil, p.child)
         local h = item.header and 16 or 20
         row:SetHeight(h)
-        row:SetPoint("TOPLEFT", p.child, "TOPLEFT", 0, y)
+        row:SetPoint("TOPLEFT", p.child, "TOPLEFT", 0, -y)
         row:SetWidth(206)
         if item.header then
             local fs = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
@@ -189,8 +191,8 @@ local function RebuildPickerRows(p, titleText, getItems, afterAction)
         y = y + h + 1
         p.rows[#p.rows + 1] = row
     end
-    p.child:SetHeight(math.max(1, -y))
-    p:SetHeight(math.min(400, math.max(64, 34 + math.max(1, -y))))
+    p.child:SetHeight(math.max(1, y))
+    p:SetHeight(math.min(400, math.max(64, 34 + y)))
 end
 
 local function ShowPicker(anchorBtn, titleText, getItems, afterAction)
@@ -371,6 +373,26 @@ local function createCard(parent, specKey, node, y)
     removeBtn:SetPoint("LEFT", addBtn, "RIGHT", 3, 0)
     removeBtn:SetText("-")
 
+    -- reorder: move this node one position up/down in the rotation chain
+    local up = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
+    up:SetWidth(18)
+    up:SetHeight(18)
+    up:SetPoint("TOPLEFT", card, "TOPLEFT", 302, -2)
+    up:SetText("^")
+    local down = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
+    down:SetWidth(18)
+    down:SetHeight(18)
+    down:SetPoint("TOPLEFT", card, "TOPLEFT", 324, -2)
+    down:SetText("v")
+    up:SetScript("OnClick", function()
+        if module.MoveNode then module:MoveNode(specKey, node.id, -1) end
+        selectSpec(specKey)
+    end)
+    down:SetScript("OnClick", function()
+        if module.MoveNode then module:MoveNode(specKey, node.id, 1) end
+        selectSpec(specKey)
+    end)
+
     local condFS = card:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     condFS:SetPoint("TOPLEFT", card, "TOPLEFT", 46, -24)
     condFS:SetWidth(PANEL_W - 70)
@@ -389,7 +411,7 @@ local function createCard(parent, specKey, node, y)
         local disabled = (cur.enabled == false)
         cb:SetChecked(not disabled)
         cardDesaturate(iconBtn, disabled)
-        nameFS:SetText((disabled and "|cff888888" or "|cffffffff") .. hex .. (node.name or node.id) .. "|r")
+        nameFS:SetText((disabled and "|cff888888" or ("|c" .. hex)) .. (node.name or node.id) .. "|r")
         condFS:SetText(NodeConditionText(cur))
     end
 
@@ -447,7 +469,9 @@ local function createPanel()
     frame:SetHeight(PANEL_H)
     frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     frame:SetFrameStrata("DIALOG")
+    frame:SetToplevel(true)
     frame:EnableMouse(true)
+    if type(UISpecialFrames) == "table" then tinsert(UISpecialFrames, "CFA_HunterRotationEditor") end
     applyBackdrop(frame, BG[1], BG[2], BG[3], BG[4])
     -- explicit solid background (see Options.lua: backdrop may silently no-op)
     local solidBg = frame:CreateTexture(nil, "BACKGROUND")
@@ -556,5 +580,6 @@ end
 
 function module.OpenRotationEditor()
     if not frame then createPanel() end
+    frame:Raise()
     frame:Show()
 end

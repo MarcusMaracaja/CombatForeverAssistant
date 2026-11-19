@@ -265,15 +265,28 @@ local E = {
     -- Expose Armor ids noted for Rogue in Rogue block; keep entries class-scoped.
 }
 
--- Index: aura spellID -> { entryIndex, tier } (auras preferred; ranks as fallback)
+-- Index: aura spellID -> { entryIndex, tier } (both auras and ranks indexed; names indexed as fallback)
 local bySpellID = {}
+local byName = {}
 local familyMax = {}
 for i, entry in ipairs(E) do
-    local scanList = entry.auras or entry.ranks or {}
-    local tierCount = #(entry.ranks or entry.auras or {})
-    for j, id in ipairs(scanList) do
-        local tier = (entry.tierBase or 0) + j
-        bySpellID[id] = { entryIndex = i, tier = tier }
+    local tierCount = math.max(#(entry.ranks or {}), #(entry.auras or {}))
+    for j, id in ipairs(entry.auras or {}) do
+        bySpellID[id] = { entryIndex = i, tier = (entry.tierBase or 0) + j }
+    end
+    for j, id in ipairs(entry.ranks or {}) do
+        if not bySpellID[id] then
+            bySpellID[id] = { entryIndex = i, tier = (entry.tierBase or 0) + j }
+        end
+        local n = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(id)
+        n = (type(n) == "table" and n.name) or n
+        if not n and GetSpellInfo then n = GetSpellInfo(id) end
+        if type(n) == "string" and n ~= "" then
+            byName[n:lower():gsub("%s*%b()%s*$", "")] = { entryIndex = i, tier = (entry.tierBase or 0) + j }
+        end
+    end
+    if entry.name then
+        byName[entry.name:lower():gsub("%s*%b()%s*$", "")] = { entryIndex = i, tier = 1 }
     end
     if tierCount > 0 then
         familyMax[entry.family] = math.max(familyMax[entry.family] or 0, (entry.tierBase or 0) + tierCount)
@@ -313,16 +326,25 @@ local function auraWalk(unit, filter)
 end
 
 local function scan(unit, harvest)
+    local readable = true
     for _, filter in ipairs(AURA_FILTERS) do
-        local list = auraWalk(unit, filter)
+        local list, ok = auraWalk(unit, filter)
+        if not ok then readable = false end
         for _, aura in ipairs(list) do
             local spellID = auraSpellID(aura)
             if spellID and bySpellID[spellID] then
                 local hit = bySpellID[spellID]
                 harvest(hit.entryIndex, hit.tier, spellID)
+            elseif type(aura.name) == "string" and not (_G.issecretvalue and issecretvalue(aura.name)) then
+                local clean = aura.name:lower():gsub("%s*%b()%s*$", "")
+                local hit = byName[clean]
+                if hit then
+                    harvest(hit.entryIndex, hit.tier, spellID or 0)
+                end
             end
         end
     end
+    return readable
 end
 
 function BuffLib:Has(unit, spellID)
@@ -336,19 +358,19 @@ end
 -- "does the unit have familyName at any tier, and is it current?"
 function BuffLib:HasFamily(unit, family)
     local st = self:Status(unit, family)
-    return st.present, st.tier, st.outdated
+    return st.present, st.tier, st.outdated, st.readable
 end
 
 function BuffLib:Status(unit, family)
     local best = 0
-    scan(unit, function(entryIndex, t)
+    local readable = scan(unit, function(entryIndex, t)
         if E[entryIndex].family == family then best = math.max(best, t) end
     end)
     local maxTier = familyMax[family]
     if best == 0 then
-        return { present = false, tier = 0, maxTier = maxTier, outdated = false }
+        return { present = false, tier = 0, maxTier = maxTier, outdated = false, readable = readable }
     end
-    return { present = true, tier = best, maxTier = maxTier, outdated = best < (maxTier or 0) }
+    return { present = true, tier = best, maxTier = maxTier, outdated = best < (maxTier or 0), readable = readable }
 end
 
 function BuffLib:GetAll(unit)

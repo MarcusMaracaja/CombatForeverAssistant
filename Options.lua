@@ -43,7 +43,7 @@ local function createPanel()
     frame:SetWidth(PANEL_W)
     frame:SetHeight(PANEL_H)
     frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-    frame:SetFrameStrata("DIALOG")
+    frame:SetFrameStrata("HIGH")
     frame:EnableMouse(true)
     applyBackdrop(frame, BG[1], BG[2], BG[3], BG[4])
     -- belt-and-suspenders: explicit solid background (works even if the

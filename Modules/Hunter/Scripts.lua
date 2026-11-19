@@ -21,6 +21,8 @@ trackerFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "PLAYER_TARGET_CHANGED" then
         module.OnTargetChanged()
     elseif event == "PLAYER_ENTERING_WORLD" then
+        -- NOTE: aspect belief is intentionally kept (persistent per character);
+        -- aspects don't expire on /reload, only on death or when recast.
         module.AspectBelief = nil
         module.MarkBelief = { slot = 0, active = false }
         module.SerpentStingBelief = { slot = 0, applied = false, expires = 0 }
@@ -44,6 +46,11 @@ trackerFrame:SetScript("OnEvent", function(_, event, ...)
             local ok, same = pcall(UnitIsUnit, unit, "pet")
             if ok and same then
                 module.PET_IS_DEAD = true
+            end
+            -- the player's aspect is lost on death; drop the persistent belief
+            local ok2, sameP = pcall(UnitIsUnit, unit, "player")
+            if ok2 and sameP and module.charDb then
+                module.charDb.aspectBelief = nil
             end
         end
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
@@ -263,53 +270,40 @@ function module:BuildEnv()
 end
 
 -- ---------------------------------------------------------------------------
--- Spec detection: override -> signature spells -> C_Traits points (SV wins ties)
+-- Spec detection: override -> C_Traits points (SV wins ties) -> signature spells
+-- Tree NAMES are "(sem nome)" on this client, so we map by POSITION:
+-- Hunter treeIDs (stable WotLK order) are { SV, MM, BM }.
 -- ---------------------------------------------------------------------------
-local TREE_HINTS = {
-    BM = { "beast", "feras", "fera", "besta" },
-    MM = { "marksman", "precis", "tirador", "sniper" },
-    SV = { "surviv", "sobreviv" },
-}
+local TREE_ORDER_HUNTER = { "SV", "MM", "BM" }
 
 local _talentCountCache = nil
-local function talentTreePoints(hints)
+local function talentTreePointsByOrdinal()
     if _talentCountCache then return _talentCountCache end
     _talentCountCache = false
     if not (C_ClassTalents and C_Traits) then return false end
     local okCfg, cfg = pcall(C_ClassTalents.GetActiveConfigID)
     if not okCfg or not cfg then return false end
     local okInfo, info = pcall(C_Traits.GetConfigInfo, cfg)
-    if okInfo and type(info) == "table" and type(info.treeIDs) == "table" then
-        local counts = {}
-        for _, treeID in ipairs(info.treeIDs) do
-            local okT, ti = pcall(C_Traits.GetTreeInfo, cfg, treeID)
-            local treeName = (okT and type(ti) == "table" and type(ti.name) == "string") and ti.name:lower() or nil
-            local key = nil
-            if treeName then
-                for k, list in pairs(hints) do
-                    for _, hint in ipairs(list) do
-                        if treeName:find(hint, 1, true) then key = k end
+    if not okInfo or type(info) ~= "table" or type(info.treeIDs) ~= "table" then return false end
+    local counts = {}
+    for idx, treeID in ipairs(info.treeIDs) do
+        local specKey = TREE_ORDER_HUNTER[idx]
+        if specKey then
+            local okN, nodes = pcall(C_Traits.GetTreeNodes, treeID)
+            local total = 0
+            if type(nodes) == "table" then
+                for _, nodeID in ipairs(nodes) do
+                    local okNI, ni = pcall(C_Traits.GetNodeInfo, cfg, nodeID)
+                    if okNI and type(ni) == "table" then
+                        total = total + (tonumber(ni.currentRank) or tonumber(ni.ranksPurchased) or tonumber(ni.activeRank) or 0)
                     end
                 end
             end
-            if key then
-                local okN, nodes = pcall(C_Traits.GetTreeNodes, treeID)
-                local total = 0
-                if type(nodes) == "table" then
-                    for _, nodeID in ipairs(nodes) do
-                        local okNI, ni = pcall(C_Traits.GetNodeInfo, cfg, nodeID)
-                        if okNI and type(ni) == "table" then
-                            total = total + (tonumber(ni.currentRank) or tonumber(ni.ranksPurchased) or tonumber(ni.activeRank) or 0)
-                        end
-                    end
-                end
-                counts[key] = total
-            end
+            counts[specKey] = total
         end
-        _talentCountCache = { counts = counts }
-        return _talentCountCache
     end
-    return false
+    _talentCountCache = { counts = counts }
+    return _talentCountCache
 end
 
 function module:DetectSpec()
@@ -317,17 +311,18 @@ function module:DetectSpec()
     if override == "BM" or override == "MM" or override == "SV" then
         return override, "override"
     end
-    local cache = talentTreePoints(TREE_HINTS)
+    local cache = talentTreePointsByOrdinal()
     local c = cache and cache.counts or nil
     local pointsBM = c and tonumber(c.BM) or 0
     local pointsMM = c and tonumber(c.MM) or 0
     local pointsSV = c and tonumber(c.SV) or 0
-    if pointsBM > pointsMM and pointsBM > pointsSV then return "BM", "C_Traits" end
-    if pointsMM > pointsBM and pointsMM > pointsSV then return "MM", "C_Traits" end
-    if pointsBM > 0 or pointsMM > 0 or pointsSV > 0 then return "SV", "C_Traits" end
+    local detail = string.format("C_Traits F=%d M=%d S=%d", pointsBM, pointsMM, pointsSV)
+    if pointsBM > pointsMM and pointsBM > pointsSV then return "BM", detail end
+    if pointsMM > pointsBM and pointsMM > pointsSV then return "MM", detail end
+    if pointsBM > 0 or pointsMM > 0 or pointsSV > 0 then return "SV", detail end
     if type(IsSpellKnown) == "function" then
-        if IsSpellKnown(19306) then return "SV", "Counterattack" end
         if IsSpellKnown(19574) then return "BM", "Bestial Wrath" end
+        if IsSpellKnown(19306) then return "SV", "Counterattack" end
         if IsSpellKnown(1310786) then return "MM", "Sniper Shot" end
     end
     return "SV", "default"
@@ -361,11 +356,11 @@ function module:ManageAspects(env)
         local numParty = groupCount(GetNumPartyMembers)
         local numRaid = groupCount(GetNumRaidMembers)
         if numParty > 0 or numRaid > 1 then
-            if not module.HasFamilyBuff("player", "AspectOfThePack") then
+            if not module.IsAspectOfPackActive() then
                 return module:Suggest(13159, "Utility")
             end
         else
-            if not module.HasFamilyBuff("player", "AspectOfTheCheetah") then
+            if not module.IsAspectOfCheetahActive() then
                 return module:Suggest(5118, "Utility")
             end
         end
@@ -417,14 +412,50 @@ local function rotationOverrides(specKey)
     return module.charDb and module.charDb.hunterRotation and module.charDb.hunterRotation[specKey] or nil
 end
 
+local function rotationOrder(specKey)
+    return module.charDb and module.charDb.hunterOrder and module.charDb.hunterOrder[specKey] or nil
+end
+
+function module:GetNodeOrder(specKey)
+    local order = rotationOrder(specKey)
+    if type(order) == "table" then return order end
+    local spec = module.RotationSpecs and module.RotationSpecs[specKey]
+    if not spec then return nil end
+    local out = {}
+    for _, n in ipairs(spec.nodes) do out[#out + 1] = n.id end
+    return out
+end
+
+function module:SetNodeOrder(specKey, order)
+    if not module.charDb then return end
+    module.charDb.hunterOrder = module.charDb.hunterOrder or {}
+    module.charDb.hunterOrder[specKey] = order
+end
+
+function module:MoveNode(specKey, nodeId, delta)
+    local unpackFn = table.unpack or unpack
+    local order = module:GetNodeOrder(specKey)
+    if not order then return false end
+    order = unpackFn and { unpackFn(order) } or { unpack(order) }
+    local idx
+    for i, id in ipairs(order) do if id == nodeId then idx = i break end end
+    if not idx then return false end
+    local j = idx + delta
+    if j < 1 or j > #order then return false end
+    order[idx], order[j] = order[j], order[idx]
+    module:SetNodeOrder(specKey, order)
+    return true
+end
+
 function module:GetEffectiveNodes(specKey)
     local spec = module.RotationSpecs and module.RotationSpecs[specKey]
     if not spec then return nil end
     local ov = rotationOverrides(specKey)
-    if not ov then return spec.nodes end
     local out = {}
-    for _, base in ipairs(spec.nodes) do
-        local o = ov[base.id]
+    local defaultIndex = {}
+    for i, base in ipairs(spec.nodes) do
+        defaultIndex[base.id] = i
+        local o = ov and ov[base.id]
         if o then
             local n = deepCopyNode(base)
             if o.enabled ~= nil then n.enabled = o.enabled end
@@ -440,6 +471,20 @@ function module:GetEffectiveNodes(specKey)
         else
             out[#out + 1] = base
         end
+    end
+    -- per-character custom order (^/v buttons in the editor) wins over the
+    -- declared default; nodes not in the custom list keep default position.
+    local custom = rotationOrder(specKey)
+    if type(custom) == "table" and #custom > 0 then
+        local pos = {}
+        for i, id in ipairs(custom) do pos[id] = i end
+        table.sort(out, function(a, b)
+            local pa, pb = pos[a.id], pos[b.id]
+            if pa and pb then return pa < pb end
+            if pa then return true end
+            if pb then return false end
+            return (defaultIndex[a.id] or 0) < (defaultIndex[b.id] or 0)
+        end)
     end
     return out
 end
@@ -463,8 +508,9 @@ function module:SetNodeOverride(specKey, nodeId, key, value)
 end
 
 function module:ResetRotationOverrides(specKey)
-    if module.charDb and module.charDb.hunterRotation then
-        module.charDb.hunterRotation[specKey] = nil
+    if module.charDb then
+        if module.charDb.hunterRotation then module.charDb.hunterRotation[specKey] = nil end
+        if module.charDb.hunterOrder then module.charDb.hunterOrder[specKey] = nil end
     end
 end
 

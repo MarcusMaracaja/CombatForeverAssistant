@@ -176,11 +176,15 @@ function module.RegisterCast(castName)
     if strip(3045) == base then -- Rapid Fire: pure self CD, no belief needed
         return
     end
-    -- aspect tracking (auras are secret in combat)
+    -- aspect tracking (auras are secret in combat). Persisted per character:
+    -- aspects don't expire on their own, so the belief can outlive /reload.
     local ids = { 5118, 13159, 13161, 13163, 13165, 20043 }
     for _, id in ipairs(ids) do
         if strip(id) == base then
-            module.AspectBelief = { active = true, name = base }
+            module.AspectBelief = { active = true, name = base, id = id, time = GetTime() }
+            if module.charDb then
+                module.charDb.aspectBelief = { id = id, name = base, time = GetTime() }
+            end
             return
         end
     end
@@ -202,9 +206,31 @@ function module.IsSerpentStingActive(unit)
     return module.HasFamilyBuff(unit, "SerpentSting")
 end
 
+-- Aura API readable? (outside combat yes; in combat the whole payload is secret)
+function module.AspectAuraReadable()
+    if not BuffLib or not BuffLib.Status then return true end
+    local st = BuffLib:Status("player", "AspectOfTheHawk")
+    return st and st.readable and true or false
+end
+
 local function stripAspectName(n)
     if type(n) ~= "string" then return "" end
     return n:lower():gsub("%s*%b()%s*$", "")
+end
+
+-- Aspect semantics: out of combat the aura API is readable and wins; in combat
+-- it is secret, so we fall back to the cast belief (session) and to a
+-- persistent per-character belief (aspects never expire on their own).
+local function aspectActive(family, id)
+    if module.HasFamilyBuff("player", family) then return true end
+    if module.AspectAuraReadable() then return false end
+    local b = module.AspectBelief
+    if b and b.active and b.name == stripAspectName(module.SpellName(id)) then
+        return true
+    end
+    local cb = module.charDb and module.charDb.aspectBelief
+    if cb and cb.id == id then return true end
+    return false
 end
 
 -- Debuff readable by name (out of combat / not secret). Returns false in
@@ -240,39 +266,68 @@ function module.IsClipped(unit)
     return module.IsWingClipActive(unit)
 end
 
-function module.IsAspectActive()
-    -- out of combat, auras are readable; in combat, use our last cast belief
-    if module.HasFamilyBuff("player", "AspectOfTheBeast")
-        or module.HasFamilyBuff("player", "AspectOfTheCheetah")
-        or module.HasFamilyBuff("player", "AspectOfTheHawk")
-        or module.HasFamilyBuff("player", "AspectOfTheMonkey")
-        or module.HasFamilyBuff("player", "AspectOfThePack")
-        or module.HasFamilyBuff("player", "AspectOfTheWild") then
-        return true
+function module.HasBuff(unit, spellIDOrName)
+    unit = unit or "player"
+    if not UnitExists(unit) then return false end
+    local wantName
+    if type(spellIDOrName) == "number" then
+        wantName = module.SpellName(spellIDOrName)
+    elseif type(spellIDOrName) == "string" then
+        wantName = spellIDOrName
     end
-    return module.AspectBelief and module.AspectBelief.active or false
+    local wantClean = wantName and stripAspectName(wantName) or nil
+
+    if C_UnitAuras and type(C_UnitAuras.GetAuraDataByIndex) == "function" then
+        for i = 1, 40 do
+            local ok, data = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, "HELPFUL")
+            if not ok or not data or type(data) ~= "table" then break end
+            local okId, sId = pcall(function()
+                return tonumber(data.spellId or data.spellID or data.auraSpellId or data.auraSpellID)
+            end)
+            if okId and sId and type(spellIDOrName) == "number" and sId == spellIDOrName then
+                return true
+            end
+            if wantClean and type(data.name) == "string"
+                and not (_G.issecretvalue and issecretvalue(data.name))
+                and stripAspectName(data.name) == wantClean then
+                return true
+            end
+        end
+    end
+
+    return false
 end
 
-function module.IsAspectOfHawkActive()
-    return module.HasFamilyBuff("player", "AspectOfTheHawk")
-        or (module.AspectBelief and module.AspectBelief.active
-            and module.AspectBelief.name == stripAspectName(module.SpellName(13165)))
+function module.IsAspectIDActive(id, family)
+    return aspectActive(family or "Generic", id)
 end
 
-function module.IsAspectOfBeastActive()
-    return module.HasFamilyBuff("player", "AspectOfTheBeast")
-end
-function module.IsAspectOfMonkeyActive()
-    return module.HasFamilyBuff("player", "AspectOfTheMonkey")
-end
 function module.IsAspectOfCheetahActive()
-    return module.HasFamilyBuff("player", "AspectOfTheCheetah")
+    return module.IsAspectIDActive(5118, "AspectOfTheCheetah")
 end
 function module.IsAspectOfPackActive()
-    return module.HasFamilyBuff("player", "AspectOfThePack")
+    return module.IsAspectIDActive(13159, "AspectOfThePack")
+end
+function module.IsAspectOfHawkActive()
+    return module.IsAspectIDActive(13165, "AspectOfTheHawk")
+end
+function module.IsAspectOfMonkeyActive()
+    return module.IsAspectIDActive(13163, "AspectOfTheMonkey")
+end
+function module.IsAspectOfBeastActive()
+    return module.IsAspectIDActive(13161, "AspectOfTheBeast")
 end
 function module.IsAspectOfWildActive()
-    return module.HasFamilyBuff("player", "AspectOfTheWild")
+    return module.IsAspectIDActive(20043, "AspectOfTheWild")
+end
+
+function module.IsAspectActive()
+    return module.IsAspectOfHawkActive()
+        or module.IsAspectOfCheetahActive()
+        or module.IsAspectOfMonkeyActive()
+        or module.IsAspectOfBeastActive()
+        or module.IsAspectOfPackActive()
+        or module.IsAspectOfWildActive()
 end
 
 function module.IsMarked(unit)

@@ -42,6 +42,21 @@ local function findKeyForSpell(spellID)
     return nil
 end
 
+-- Encurta teclas do numpad para "N": NUMPAD5 -> N5, NUMPADPLUS -> N+ etc.
+local function ShortenKey(key)
+    if type(key) ~= "string" or key == "" then return key end
+    local upper = key:upper()
+    upper = upper:gsub("TECLADO%s*", "")
+    upper = upper:gsub("NUMÉRICO", "N"):gsub("NUMERICO", "N"):gsub("NÚMERO", "N"):gsub("NUMERO", "N")
+    upper = upper:gsub("NUMLOCK", "NL")
+    upper = upper:gsub("NUMPADDECIMAL", "N."):gsub("NUMPADDIVIDE", "N/")
+        :gsub("NUMPADMINUS", "N%-"):gsub("NUMPADMULTIPLY", "N*")
+        :gsub("NUMPADPLUS", "N+")
+    upper = upper:gsub("NUMPAD([0-9])", "N%1")
+    upper = upper:gsub("NUM%s*([0-9])", "N%1"):gsub("NUM%s*([+%*/%-%.])", "N%1")
+    return (upper:gsub("%s+", ""))
+end
+
 local function applySavedPosition(self)
     local db = addon.charDb
     self:ClearAllPoints()
@@ -193,7 +208,7 @@ function KeyButton.ShowFor(spellID)
         return false
     end
     if not frame then createFrame() end
-    frame.text:SetText(key)
+    frame.text:SetText(ShortenKey(key))
     frame:Show()
     KeyButton.ApplyLock()
     return true
