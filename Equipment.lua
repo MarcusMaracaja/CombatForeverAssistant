@@ -268,6 +268,7 @@ local function buildEquipmentTab(parent)
     hint:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, -6)
     hint:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -6, -6)
     hint:SetJustifyH("LEFT")
+    hint:SetWordWrap(true)
     hint:SetText(L["equip_hint"])
 
     local scroll = CreateFrame("ScrollFrame", nil, parent, "UIPanelScrollFrameTemplate")
@@ -279,6 +280,13 @@ local function buildEquipmentTab(parent)
     if not contentWidth or contentWidth < 150 then contentWidth = 374 end
     child:SetWidth(contentWidth - 30)
     child:SetHeight(1)
+    local function updateChildWidth()
+        local width = parent:GetWidth()
+        if not width or width < 150 then width = 374 end
+        child:SetWidth(math.max(120, width - 30))
+    end
+    parent:HookScript("OnSizeChanged", updateChildWidth)
+    parent:HookScript("OnShow", updateChildWidth)
     scroll:SetScrollChild(child)
     scroll:SetScript("OnMouseWheel", function(self, delta)
         local current = self:GetVerticalScroll() or 0

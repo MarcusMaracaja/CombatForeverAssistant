@@ -15,6 +15,7 @@ local tabButtons = {}
 local currentTab = "general"
 
 local PANEL_W, PANEL_H = 520, 420
+local MAX_PANEL_MARGIN = 32
 local SIDE_W = 128
 local CONTENT_W, CONTENT_H = PANEL_W - SIDE_W - 18, PANEL_H - 54
 local SCROLLBAR_W = 24
@@ -41,9 +42,22 @@ local function applyBackdrop(f, r, g, b, a)
 end
 
 local function createPanel()
+    local uiWidth = tonumber(UIParent:GetWidth()) or (PANEL_W + MAX_PANEL_MARGIN)
+    local uiHeight = tonumber(UIParent:GetHeight()) or (PANEL_H + MAX_PANEL_MARGIN)
+    local maxWidth = math.max(PANEL_W, uiWidth - MAX_PANEL_MARGIN)
+    local maxHeight = math.max(PANEL_H, uiHeight - MAX_PANEL_MARGIN)
+    local panelWidth = math.max(PANEL_W, math.min(maxWidth, tonumber(addon.db.optionsWidth) or PANEL_W))
+    local panelHeight = math.max(PANEL_H, math.min(maxHeight, tonumber(addon.db.optionsHeight) or PANEL_H))
+
     frame = CreateFrame("Frame", "CFA_OptionsFrame", UIParent, "BackdropTemplate")
-    frame:SetWidth(PANEL_W)
-    frame:SetHeight(PANEL_H)
+    frame:SetSize(panelWidth, panelHeight)
+    frame:SetResizable(true)
+    if type(frame.SetResizeBounds) == "function" then
+        frame:SetResizeBounds(PANEL_W, PANEL_H, maxWidth, maxHeight)
+    else
+        if type(frame.SetMinResize) == "function" then frame:SetMinResize(PANEL_W, PANEL_H) end
+        if type(frame.SetMaxResize) == "function" then frame:SetMaxResize(maxWidth, maxHeight) end
+    end
     frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     frame:SetFrameStrata("HIGH")
     frame:SetAlpha(0.85)
@@ -55,6 +69,23 @@ local function createPanel()
     solidBg:SetTexture("Interface\\Buttons\\WHITE8X8")
     solidBg:SetVertexColor(BG[1], BG[2], BG[3], 1)
     solidBg:SetAllPoints()
+
+    local artBg = frame:CreateTexture(nil, "BORDER")
+    artBg:SetTexture("Interface\\AddOns\\" .. addonName .. "\\Textures\\CombatForeverAssistant_Background.tga")
+    artBg:SetSize(PANEL_W - 32, (PANEL_W - 32) * 768 / 1408)
+    artBg:SetPoint("CENTER", frame, "CENTER", 0, -12)
+    artBg:SetTexCoord(0, 1, 116 / 512, 395 / 512)
+    artBg:SetAlpha(0.68)
+    local function updateArtSize(width, height)
+        local artWidth = math.min(width - 32, (height - 60) * 1408 / 768)
+        artWidth = math.max(1, artWidth)
+        artBg:SetSize(artWidth, artWidth * 768 / 1408)
+    end
+    frame:SetScript("OnSizeChanged", function(_, width, height)
+        updateArtSize(width, height)
+    end)
+    updateArtSize(panelWidth, panelHeight)
+
     if addon.db.posX and addon.db.posY then
         frame:ClearAllPoints()
         frame:SetPoint("CENTER", UIParent, "CENTER", addon.db.posX, addon.db.posY)
@@ -126,6 +157,36 @@ local function createPanel()
     content:SetPoint("TOPLEFT", SIDE_W + 8, -44)
     content:SetPoint("BOTTOMRIGHT", -10, 10)
     frame.content = content
+
+    local resizeGrip = CreateFrame("Button", nil, frame)
+    resizeGrip:SetSize(16, 16)
+    resizeGrip:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -2, 2)
+    resizeGrip:SetFrameLevel(frame:GetFrameLevel() + 20)
+    local gripMarks = {}
+    for i = 1, 3 do
+        local mark = resizeGrip:CreateTexture(nil, "OVERLAY")
+        mark:SetTexture("Interface\\Buttons\\WHITE8X8")
+        mark:SetVertexColor(ORANGE[1], ORANGE[2], ORANGE[3], 0.65)
+        mark:SetSize(2, 2)
+        mark:SetPoint("BOTTOMRIGHT", resizeGrip, "BOTTOMRIGHT", -2 - (i - 1) * 4, 2 + (i - 1) * 4)
+        gripMarks[i] = mark
+    end
+    resizeGrip:SetScript("OnMouseDown", function(_, button)
+        if button == "LeftButton" then frame:StartSizing("BOTTOMRIGHT") end
+    end)
+    resizeGrip:SetScript("OnMouseUp", function(_, button)
+        if button ~= "LeftButton" then return end
+        frame:StopMovingOrSizing()
+        local width, height = frame:GetSize()
+        addon.db.optionsWidth = math.floor(width + 0.5)
+        addon.db.optionsHeight = math.floor(height + 0.5)
+    end)
+    resizeGrip:SetScript("OnEnter", function()
+        for _, mark in ipairs(gripMarks) do mark:SetVertexColor(ORANGE[1], ORANGE[2], ORANGE[3], 1) end
+    end)
+    resizeGrip:SetScript("OnLeave", function()
+        for _, mark in ipairs(gripMarks) do mark:SetVertexColor(ORANGE[1], ORANGE[2], ORANGE[3], 0.65) end
+    end)
 
     frame:SetScript("OnHide", function()
         if addon.Hunter and addon.Hunter.HidePicker then addon.Hunter.HidePicker() end
@@ -255,6 +316,7 @@ local function eq3(a, b)
 end
 
 function buildKeyButtonTab(parent)
+    local tabFrame = parent
     local scroll = CreateFrame("ScrollFrame", nil, parent, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, 0)
     scroll:SetSize(CONTENT_W, CONTENT_H)
@@ -264,6 +326,16 @@ function buildKeyButtonTab(parent)
     content:SetPoint("TOPLEFT", scroll, "TOPLEFT", 0, 0)
     content:SetSize(CONTENT_W - SCROLLBAR_W - 4, 760)
     scroll:SetScrollChild(content)
+    local function updateScrollLayout()
+        local width, height = tabFrame:GetSize()
+        if not width or width < 100 then width = CONTENT_W end
+        if not height or height < 100 then height = CONTENT_H end
+        scroll:SetSize(width, height)
+        content:SetWidth(math.max(100, width - SCROLLBAR_W - 4))
+    end
+    tabFrame:HookScript("OnSizeChanged", updateScrollLayout)
+    tabFrame:HookScript("OnShow", updateScrollLayout)
+    updateScrollLayout()
     content:Show()
     scroll:Show()
     scroll:SetScript("OnMouseWheel", function(self, delta)
@@ -295,6 +367,9 @@ function buildKeyButtonTab(parent)
         end)
         local text = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         text:SetPoint("LEFT", button, "RIGHT", 4, 0)
+        text:SetPoint("RIGHT", parent, "RIGHT", -6, 0)
+        text:SetJustifyH("LEFT")
+        text:SetWordWrap(true)
         text:SetText(label)
         y = y - 26
         return button
@@ -402,6 +477,9 @@ function buildKeyButtonTab(parent)
         end)
         local text = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         text:SetPoint("LEFT", button, "RIGHT", 4, 0)
+        text:SetPoint("RIGHT", parent, "RIGHT", -6, 0)
+        text:SetJustifyH("LEFT")
+        text:SetWordWrap(true)
         text:SetText(label)
         y = y - 26
     end
@@ -631,6 +709,7 @@ function buildAboutTab(parent)
     fs:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -6, -8)
     fs:SetJustifyH("LEFT")
     fs:SetJustifyV("TOP")
+    fs:SetWordWrap(true)
     local version = "?"
     local getMetadata = GetAddOnMetadata
     if C_AddOns and type(C_AddOns.GetAddOnMetadata) == "function" then

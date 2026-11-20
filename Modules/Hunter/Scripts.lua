@@ -629,10 +629,11 @@ function module:Suggest(spellID, color)
     local suggestion = { spellID = knownID or spellID, color = color or "Utility" }
     local aspect = module.PendingAspectSuggestion
     if aspect and aspect.spellID ~= suggestion.spellID then
-        -- Keep the rotation as the primary suggestion while the aspect stays secondary.
-        suggestion.additional = { aspect }
+        aspect.additional = { suggestion }
+        module.PendingSuggestion = aspect
+    else
+        module.PendingSuggestion = suggestion
     end
-    module.PendingSuggestion = suggestion
     return true
 end
 

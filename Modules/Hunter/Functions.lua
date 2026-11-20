@@ -56,25 +56,7 @@ end
 function module.IsOnCooldown(name, id)
     local known = id or module.SpellIDFromName(name)
     if not known then return false end
-    if not (C_Spell and C_Spell.GetSpellCooldown) then return false end
-    local ok, info = pcall(C_Spell.GetSpellCooldown, known)
-    if not ok or type(info) ~= "table" then return false end
-    -- This client reports cooldownStartTime/cooldownDuration (older field names
-    -- startTime/duration on some paths); isActive == true means on recovery.
-    local start = info.startTime or info.cooldownStartTime
-    local dur = info.duration or info.cooldownDuration
-    -- Guard against secret (tainted) numbers: never compare them arithmetically.
-    -- This client degrades some cooldown reads to secret values while tainted.
-    if _G.issecretvalue and (issecretvalue(start) or issecretvalue(dur)) then return true end
-    if type(start) == "number" and type(dur) == "number" and start > 0 and dur > 0 then
-        return (GetTime() - start) < dur
-    end
-    if info.isActive == true then
-        -- GCD (~1.5s) is not a cooldown; anything else is treated as active
-        if type(dur) == "number" and dur <= 1.5 then return false end
-        return true
-    end
-    return false
+    return addon:IsSpellOnCooldown(known)
 end
 
 function module.CheckCastable(z)

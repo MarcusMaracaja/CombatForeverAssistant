@@ -71,8 +71,9 @@ local function BuildHunterTab(parent)
 
     local hint = parent:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     hint:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
-    hint:SetWidth(420)
+    hint:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -8, y)
     hint:SetJustifyH("LEFT")
+    hint:SetWordWrap(true)
     hint:SetText("O editor mostra as habilidades da rotação da spec e permite ligar/desligar cada uma (por personagem).")
 end
 

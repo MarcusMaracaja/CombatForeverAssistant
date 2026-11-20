@@ -21,6 +21,8 @@ local defaults = {
     keyBgAlpha = 0.72,
     keyTextColor = { 1.0, 0.9, 0.3 },
     warnOutdated = true,
+    optionsWidth = 520,
+    optionsHeight = 420,
     RotationEditor = {},
 }
 
@@ -201,18 +203,37 @@ local function updateSuggestionDisplay(suggestion, module)
             end
         end
     end
+    local readySuggestions = {}
+    local keySuggestion
+    for _, candidate in ipairs(suggestions) do
+        local onCooldown = false
+        if type(candidate) == "table" and candidate.kind ~= "item"
+            and type(candidate.spellID) == "number" then
+            local remaining, duration
+            onCooldown, remaining, duration = addon:IsSpellOnCooldown(candidate.spellID)
+            if onCooldown then
+                addon:DebugPrint("Sugestão removida por cooldown", candidate.spellID,
+                    string.format("(%.1fs de %.1fs)", remaining, duration))
+            elseif not keySuggestion then
+                keySuggestion = candidate
+            end
+        end
+        if not onCooldown then readySuggestions[#readySuggestions + 1] = candidate end
+    end
+    suggestions = readySuggestions
+
     if addon.Visuals then
         if #suggestions > 0 and addon.Visuals.ShowMany then
             addon.Visuals.ShowMany(suggestions)
-        elseif suggestion and suggestion.spellID then
-            addon.Visuals.Show(suggestion.spellID, suggestion.color or "Utility")
+        elseif keySuggestion then
+            addon.Visuals.Show(keySuggestion.spellID, keySuggestion.color or "Utility")
         else
             addon.Visuals.Hide()
         end
     end
     if addon.KeyButton then
-        if suggestion and suggestion.spellID and addon.db.keyButton then
-            addon.KeyButton.ShowFor(suggestion.spellID)
+        if keySuggestion and addon.db.keyButton then
+            addon.KeyButton.ShowFor(keySuggestion.spellID, true)
         elseif addon.db.keyButton and addon.db.keyButtonAlways then
             addon.KeyButton.ShowPlaceholder()
         else
@@ -520,16 +541,19 @@ local function cooldownField(info, primary, fallback)
         return result
     end)
     if not ok then return nil end
-    return addon.SafeNumber(value, nil)
+    local secret = value ~= nil and _G.issecretvalue and issecretvalue(value) or false
+    return addon.SafeNumber(value, nil), secret
 end
 
 local function cooldownFromInfo(info)
     if type(info) ~= "table" then return 0, 0, false end
-    local start = cooldownField(info, "startTime", "cooldownStartTime")
-    local duration = cooldownField(info, "duration", "cooldownDuration")
-    local remaining = cooldownField(info, "timeUntilEndOfStartRecovery")
-    local okActive, isActive = pcall(function() return info.isActive == true end)
-    if not okActive then isActive = false end
+    local start, startSecret = cooldownField(info, "startTime", "cooldownStartTime")
+    local duration, durationSecret = cooldownField(info, "duration", "cooldownDuration")
+    local remaining, remainingSecret = cooldownField(info, "timeUntilEndOfStartRecovery")
+    local okActive, activeValue = pcall(function() return info.isActive end)
+    local activeSecret = okActive and activeValue ~= nil
+        and _G.issecretvalue and issecretvalue(activeValue) or false
+    local isActive = okActive and not activeSecret and activeValue == true
     local timeLeft
     if start ~= nil and duration ~= nil then
         local now = addon.SafeNumber(GetTime(), 0) or 0
@@ -537,9 +561,12 @@ local function cooldownFromInfo(info)
     end
     if timeLeft == nil then
         if remaining and remaining > 0 then return remaining, duration or 0, true end
+        if startSecret or durationSecret or remainingSecret or activeSecret or isActive then
+            if isActive and duration and duration <= 1.5 then return 0, duration, true end
+            return math.huge, duration or 0, true
+        end
         return 0, 0, false
     end
-    timeLeft = math.max(timeLeft or 0, remaining or 0)
     if timeLeft > 0 then
         return timeLeft, duration or 0, true
     end
@@ -987,6 +1014,55 @@ function addon:ActionCooldown(slot)
     return 0, 0, false
 end
 
+function addon:IsSpellOnCooldown(spellID)
+    if type(spellID) ~= "number" then return false, 0, 0, false end
+
+    local knownID = addon.Compat and addon.Compat.ResolveKnownID
+        and addon.Compat.ResolveKnownID(spellID) or spellID
+    local ids, seenIDs = {}, {}
+    local function addID(id)
+        if type(id) == "number" and not seenIDs[id] then
+            seenIDs[id] = true
+            ids[#ids + 1] = id
+        end
+    end
+    addID(knownID)
+    addID(spellID)
+    local families = addon.Compat and addon.Compat.FamilyOf
+    local family = families and (families[knownID] or families[spellID])
+    if family then
+        for _, id in ipairs(family) do addID(id) end
+    end
+
+    local cooldown, duration, readable, onCooldown = 0, 0, false, false
+    local function considerCooldown(remaining, cooldownDuration, isReadable)
+        if not isReadable then return end
+        readable = true
+        cooldownDuration = cooldownDuration or 0
+        if remaining <= 0.05 or (cooldownDuration <= 1.5 and remaining <= 1.5) then return end
+        onCooldown = true
+        if remaining > cooldown then
+            cooldown, duration = remaining, cooldownDuration
+        end
+    end
+    for _, id in ipairs(ids) do
+        local remaining, spellDuration, spellReadable = addon.Compat.SpellCooldown(id)
+        considerCooldown(remaining, spellDuration, spellReadable)
+    end
+
+    local seenSlots = {}
+    for _, id in ipairs({ knownID, spellID }) do
+        local slot = addon:FindActionSlot(id)
+        if slot and not seenSlots[slot] then
+            seenSlots[slot] = true
+            local remaining, actionDuration, actionReadable = addon:ActionCooldown(slot)
+            considerCooldown(remaining, actionDuration, actionReadable)
+        end
+    end
+
+    return onCooldown, cooldown, duration, readable
+end
+
 -- ---------------------------------------------------------------------------
 -- IsSpellInRangeEx — alcance estrito (true/false/nil). Nil = desconhecido,
 -- nunca interpretado como "em alcance" (evita o bug de todo alvo parecer
@@ -1206,40 +1282,7 @@ function addon:CheckIfSpellCastable(z)
         if ok then isUsable = not not a; notEnoughPower = not not b end
     end
 
-    local cooldown = 0
-    local duration = 0
-    local checkedCooldownIDs = {}
-    local function readSpellCooldown(id)
-        if type(id) ~= "number" or checkedCooldownIDs[id] then return end
-        checkedCooldownIDs[id] = true
-        if addon.Compat and addon.Compat.SpellCooldown then
-            local cd, dur, readable = addon.Compat.SpellCooldown(id)
-            if readable then
-                if (cd or 0) > cooldown then
-                    cooldown, duration = cd, dur or 0
-                end
-            end
-        end
-    end
-    local cdID = knownID or spellID
-    readSpellCooldown(cdID)
-    local spellFamily = cdID and addon.Compat and addon.Compat.FamilyOf
-        and addon.Compat.FamilyOf[cdID]
-    if spellFamily then
-        for _, familyID in ipairs(spellFamily) do readSpellCooldown(familyID) end
-    end
-    local actionSlot = nil
-    if knownID and addon.FindActionSlot then
-        actionSlot = addon:FindActionSlot(knownID)
-    end
-    if actionSlot and addon.ActionCooldown then
-        local sc, sd, readable = addon:ActionCooldown(actionSlot)
-        if readable then
-            if (sc or 0) > cooldown then
-                cooldown, duration = sc, sd or duration
-            end
-        end
-    end
+    local onCooldown, cooldown, duration = addon:IsSpellOnCooldown(knownID or spellID)
     local Aura = z.Debuff or z.Buff or z.MyDebuff or z.MyBuff
 
     -- Alcance: nil (desconhecido/segreto) não bloqueia — igual ao SFF (SpellInRange retorna 1 quando nil)
@@ -1256,8 +1299,7 @@ function addon:CheckIfSpellCastable(z)
         end
     end
 
-    local cooldownOk = cooldown <= 0.05
-    if not cooldownOk then
+    if onCooldown then
         return fail(string.format("em cooldown (%.1fs de %.1fs)",
             tonumber(cooldown) or 0, tonumber(duration) or 0))
     end

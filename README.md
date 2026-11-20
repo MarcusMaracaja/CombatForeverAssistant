@@ -91,6 +91,16 @@ control.
 - **H-0215** — Improved cooldown checks (including action-bar reads and spell ranks), kept
   Hunter aspects and Shaman buffs eligible until confirmed active, and added flame, lightning,
   and zoom highlight modes. New behavior still needs in-game validation.
+- **H-0216** — Replaced the options-panel watermark with original teal-and-amber fantasy
+  background art; the new artwork still needs in-game visual validation.
+- **H-0217** — Made the main options panel resizable with saved dimensions, synchronized the
+  Button tab scroll area with the panel size, and constrained long help text to its tab.
+- **H-0218** — Gave pending Hunter aspects and Shaman buffs first priority for the key-button
+  recommendation; the rotation remains secondary until the buff is active.
+- **H-0219** — Centralized cooldown checks across spell ranks and action-bar slots, filtering
+  cooldowned spells before both highlights and key-button recommendations. Needs in-game testing.
+- **H-0220** — Left-aligned checkbox and highlight-mode labels so they remain visually attached
+  to their controls when the options window is resized.
 
 > **Saved variables:** settings persist on `/reload` (and on logout/clean exit), like any
 > Blizzard client. An earlier bug made menu changes persist nowhere: `addon.db` was bound
@@ -259,6 +269,16 @@ Ele **não** aperta a tecla por você — apenas destaca o botão. Você continu
 - **H-0215** — Melhorada a leitura de cooldowns (incluindo barra de ação e ranks), mantidas as
   sugestões de aspectos do Hunter e buffs do Shaman até a confirmação de que estão ativos, e
   adicionados os destaques de chama, raio e zoom. As novidades ainda precisam de teste em jogo.
+- **H-0216** — Criada uma arte original em tons de azul-esverdeado e âmbar para o fundo do painel
+  de opções; a nova arte ainda precisa de validação visual em jogo.
+- **H-0217** — Janela principal redimensionável com tamanho salvo; a rolagem da aba Botão acompanha
+  o painel e os textos de ajuda respeitam a largura disponível.
+- **H-0218** — Aspectos pendentes do Hunter e buffs do Shaman passam à frente na recomendação da
+  tecla; a rotação permanece como sugestão secundária até o buff estar ativo.
+- **H-0219** — Centralizada a checagem de cooldown por ranks e slots da barra; habilidades em CD
+  são removidas antes do destaque e da recomendação de tecla. Precisa de teste em jogo.
+- **H-0220** — Alinhados à esquerda os rótulos das caixas de seleção e das opções de moldura,
+  mantendo-os junto aos controles ao redimensionar a janela.
 
 > **Variáveis salvas:** as configurações persistem no `/reload` (e no logout/saída limpa),
 > como em qualquer cliente Blizzard. Um bug anterior fazia as mudanças sumirem: `addon.db`

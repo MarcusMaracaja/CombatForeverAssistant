@@ -688,7 +688,10 @@ function module:GetSuggestion()
 
     local buffSuggestion = nextExtraSuggestion(env, specKey)
     if self.PendingSuggestion then
-        if buffSuggestion then self.PendingSuggestion.additional = { buffSuggestion } end
+        if buffSuggestion then
+            buffSuggestion.additional = { self.PendingSuggestion }
+            return buffSuggestion
+        end
         return self.PendingSuggestion
     end
     return buffSuggestion

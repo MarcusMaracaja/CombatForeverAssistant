@@ -39,6 +39,10 @@ local function findKeyForSpell(spellID)
             if key then return key end
         end
     end
+    if addon.FindActionSlot then
+        local slot = addon:FindActionSlot(spellID)
+        if slot then return bindingForSlot(slot) end
+    end
     return nil
 end
 
@@ -201,7 +205,12 @@ function KeyButton.ShowPlaceholder()
     return true
 end
 
-function KeyButton.ShowFor(spellID)
+function KeyButton.ShowFor(spellID, cooldownChecked)
+    if not cooldownChecked and type(addon.IsSpellOnCooldown) == "function"
+        and addon:IsSpellOnCooldown(spellID) then
+        KeyButton.Hide()
+        return false
+    end
     local key = findKeyForSpell(spellID)
     if not key then
         KeyButton.Hide()
