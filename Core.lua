@@ -10,7 +10,7 @@ local L = addon.L
 
 -- Defaults (filled lazily so old settings survive schema changes).
 local defaults = {
-    visualMode = "circle",      -- "circle" | "border"
+    visualMode = "circle",      -- "circle" | "border" | "flame" | "lightning" | "zoom"
     borderWidth = 12,           -- px used by border mode
     keyButton = true,
     keyButtonLocked = false,
@@ -513,29 +513,56 @@ function addon.Compat.CheckDebuff(SpellName, unit, mine)
     return CheckAura("HARMFUL", "target", SpellName, unit, mine)
 end
 
-function addon.Compat.SpellCooldown(spellID)
-    if type(spellID) ~= "number" then return 0, 0 end
-    if not (C_Spell and C_Spell.GetSpellCooldown) then return 0, 0 end
-    local ok, info = pcall(C_Spell.GetSpellCooldown, spellID)
-    if not ok or type(info) ~= "table" then return 0, 0 end
-    local start = addon.SafeNumber(info.startTime, nil) or addon.SafeNumber(info.cooldownStartTime, nil) or 0
-    local duration = addon.SafeNumber(info.duration, nil) or addon.SafeNumber(info.cooldownDuration, nil) or 0
-    local isActive = info.isActive == true
-    local remaining = addon.SafeNumber(info.timeUntilEndOfStartRecovery, nil)
-    local now = addon.SafeNumber(GetTime(), 0) or 0
-    if remaining ~= nil and remaining > 0 then
-        return remaining, math.max(1.6, duration > 0 and duration or 1.6)
+local function cooldownField(info, primary, fallback)
+    local ok, value = pcall(function()
+        local result = info[primary]
+        if result == nil and fallback then result = info[fallback] end
+        return result
+    end)
+    if not ok then return nil end
+    return addon.SafeNumber(value, nil)
+end
+
+local function cooldownFromInfo(info)
+    if type(info) ~= "table" then return 0, 0, false end
+    local start = cooldownField(info, "startTime", "cooldownStartTime")
+    local duration = cooldownField(info, "duration", "cooldownDuration")
+    local remaining = cooldownField(info, "timeUntilEndOfStartRecovery")
+    local okActive, isActive = pcall(function() return info.isActive == true end)
+    if not okActive then isActive = false end
+    local timeLeft
+    if start ~= nil and duration ~= nil then
+        local now = addon.SafeNumber(GetTime(), 0) or 0
+        timeLeft = math.max(0, start + duration - now)
     end
-    local timeLeft = start + duration - now
-    if isActive and timeLeft <= 0 then
-        timeLeft = (duration > 0 and math.max(1.6, duration)) or 5
+    if timeLeft == nil then
+        if remaining and remaining > 0 then return remaining, duration or 0, true end
+        return 0, 0, false
     end
+    timeLeft = math.max(timeLeft or 0, remaining or 0)
     if timeLeft > 0 then
-        if duration <= 1.5 then duration = 1.6 end
-        return timeLeft, duration
+        return timeLeft, duration or 0, true
     end
-    if duration > 1.5 and start == 0 then return duration, duration end
-    return 0, 0
+    if isActive and duration and duration > 0 then
+        return duration, duration, true
+    end
+    return 0, duration or 0, true
+end
+
+function addon.Compat.SpellCooldown(spellID)
+    if type(spellID) ~= "number" then return 0, 0, false end
+    if C_Spell and type(C_Spell.GetSpellCooldown) == "function" then
+        local ok, info = pcall(C_Spell.GetSpellCooldown, spellID)
+        if ok then
+            local cooldown, duration, readable = cooldownFromInfo(info)
+            if readable then return cooldown, duration, true end
+        end
+    end
+    if type(GetSpellCooldown) == "function" then
+        local ok, start, duration = pcall(GetSpellCooldown, spellID)
+        if ok then return cooldownFromInfo({ startTime = start, duration = duration }) end
+    end
+    return 0, 0, false
 end
 
 function addon.Compat.SpellBookItem(i, bookType)
@@ -945,33 +972,19 @@ end
 -- Robusto: independe de rank/nome; usa C_ActionBar.GetActionCooldown.
 -- ---------------------------------------------------------------------------
 function addon:ActionCooldown(slot)
-    if not slot then return 0, 0 end
+    if not slot then return 0, 0, false end
     if C_ActionBar and type(C_ActionBar.GetActionCooldown) == "function" then
         local ok, info = pcall(C_ActionBar.GetActionCooldown, slot)
-        if ok and type(info) == "table" then
-            local start = addon.SafeNumber(function() return info.startTime end, nil)
-                or addon.SafeNumber(function() return info.cooldownStartTime end, nil) or 0
-            local duration = addon.SafeNumber(function() return info.duration end, nil)
-                or addon.SafeNumber(function() return info.cooldownDuration end, nil) or 0
-            local isActive = info.isActive == true
-            local remaining = addon.SafeNumber(function() return info.timeUntilEndOfStartRecovery end, nil)
-            if remaining ~= nil and remaining > 0 then
-                return remaining, math.max(1.6, duration > 0 and duration or 1.6)
-            end
-            local now = addon.SafeNumber(function() return GetTime() end, 0) or 0
-            local timeLeft = start + duration - now
-            if isActive and timeLeft <= 0 then
-                timeLeft = (duration > 0 and math.max(1.6, duration)) or 5
-            end
-            if timeLeft > 0 then
-                if duration <= 1.5 then duration = 1.6 end
-                return timeLeft, duration
-            end
-            if duration > 1.5 and start == 0 then return duration, duration end
-            return 0, 0
+        if ok then
+            local cooldown, duration, readable = cooldownFromInfo(info)
+            if readable then return cooldown, duration, true end
         end
     end
-    return 0, 0
+    if type(GetActionCooldown) == "function" then
+        local ok, start, duration = pcall(GetActionCooldown, slot)
+        if ok then return cooldownFromInfo({ startTime = start, duration = duration }) end
+    end
+    return 0, 0, false
 end
 
 -- ---------------------------------------------------------------------------
@@ -1138,11 +1151,6 @@ end
 -- GCD, alcance, auras (buff/debuff/myBuff/myDebuff), EnemyTargetNeeded,
 -- TargetThatUsesManaNeeded, NotIfActive, EvenIfNotUsable.
 -- ---------------------------------------------------------------------------
-local GLOBAL_COOLDOWN_SPELL = ({
-    DEATHKNIGHT = 45902, DRUID = 5176, HUNTER = 3044, MAGE = 133, PALADIN = 635,
-    PRIEST = 585, ROGUE = 1752, SHAMAN = 403, WARLOCK = 686, WARRIOR = 772,
-})[select(2, UnitClass("player")) or ""] or 2973
-
 function addon:CheckIfSpellCastable(z)
     if type(z) ~= "table" then return false end
 
@@ -1190,18 +1198,6 @@ function addon:CheckIfSpellCastable(z)
         if enemy == false then return fail("sem alvo inimigo") end
     end
 
-    local lag = 0
-    if type(GetNetStats) == "function" then
-        local ok, _, _, latency = pcall(GetNetStats)
-        if ok and type(latency) == "number" then lag = latency / 1000 end
-    end
-
-    local castingTimeLeft = 0
-    if addon.Compat and addon.Compat.GetCasting then
-        local ct = addon.Compat.GetCasting(nil, "player")
-        if ct and ct > 0 then castingTimeLeft = ct end
-    end
-
     local isUsable, notEnoughPower = true, false
     if addon.Compat and addon.Compat.UsableSpell then
         isUsable, notEnoughPower = addon.Compat.UsableSpell(baseName, knownID)
@@ -1212,28 +1208,38 @@ function addon:CheckIfSpellCastable(z)
 
     local cooldown = 0
     local duration = 0
+    local checkedCooldownIDs = {}
+    local function readSpellCooldown(id)
+        if type(id) ~= "number" or checkedCooldownIDs[id] then return end
+        checkedCooldownIDs[id] = true
+        if addon.Compat and addon.Compat.SpellCooldown then
+            local cd, dur, readable = addon.Compat.SpellCooldown(id)
+            if readable then
+                if (cd or 0) > cooldown then
+                    cooldown, duration = cd, dur or 0
+                end
+            end
+        end
+    end
     local cdID = knownID or spellID
-    if addon.Compat and addon.Compat.SpellCooldown and cdID then
-        local cd, dur = addon.Compat.SpellCooldown(cdID)
-        cooldown = cd or 0
-        duration = dur or 0
+    readSpellCooldown(cdID)
+    local spellFamily = cdID and addon.Compat and addon.Compat.FamilyOf
+        and addon.Compat.FamilyOf[cdID]
+    if spellFamily then
+        for _, familyID in ipairs(spellFamily) do readSpellCooldown(familyID) end
     end
     local actionSlot = nil
     if knownID and addon.FindActionSlot then
         actionSlot = addon:FindActionSlot(knownID)
     end
     if actionSlot and addon.ActionCooldown then
-        local sc, sd = addon:ActionCooldown(actionSlot)
-        if sc and sc > (cooldown or 0) then
-            cooldown, duration = sc, sd or duration
+        local sc, sd, readable = addon:ActionCooldown(actionSlot)
+        if readable then
+            if (sc or 0) > cooldown then
+                cooldown, duration = sc, sd or duration
+            end
         end
     end
-    local globalcooldown = 0
-    if GLOBAL_COOLDOWN_SPELL and addon.Compat and addon.Compat.SpellCooldown then
-        local gcd = addon.Compat.SpellCooldown(GLOBAL_COOLDOWN_SPELL)
-        globalcooldown = gcd or 0
-    end
-
     local Aura = z.Debuff or z.Buff or z.MyDebuff or z.MyBuff
 
     -- Alcance: nil (desconhecido/segreto) não bloqueia — igual ao SFF (SpellInRange retorna 1 quando nil)
@@ -1250,12 +1256,10 @@ function addon:CheckIfSpellCastable(z)
         end
     end
 
-    local cooldownOk = (cooldown <= lag + castingTimeLeft)
-        or (globalcooldown == 0 and duration <= 1.5)
-        or (globalcooldown > 0 and cooldown <= globalcooldown)
+    local cooldownOk = cooldown <= 0.05
     if not cooldownOk then
-        return fail(string.format("em cooldown (%.1fs de %.1fs, gcd=%.1fs)",
-            tonumber(cooldown) or 0, tonumber(duration) or 0, tonumber(globalcooldown) or 0))
+        return fail(string.format("em cooldown (%.1fs de %.1fs)",
+            tonumber(cooldown) or 0, tonumber(duration) or 0))
     end
 
     local notIfActiveOk = true

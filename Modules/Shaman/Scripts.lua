@@ -197,12 +197,32 @@ local function spellName(spellID)
     return Compat.SpellName(knownID) or Compat.SpellName(spellID)
 end
 
-local function buffActive(spellID, beliefKey, requirePlayerSource)
+local function buffActive(spellID, beliefKey, requirePlayerSource, auraFamily)
+    local status
+    if auraFamily and addon.BuffLib and addon.BuffLib.Status then
+        local ok, result = pcall(addon.BuffLib.Status, addon.BuffLib, "player", auraFamily)
+        if ok and type(result) == "table" then
+            status = result
+            if status.present then return true end
+        end
+    end
     local name = spellName(spellID)
-    if name and Compat.CheckBuff and Compat.CheckBuff(name, "player", requirePlayerSource ~= false) then
+    local mine = requirePlayerSource ~= false
+    if auraFamily then mine = false end
+    if name and Compat.CheckBuff and Compat.CheckBuff(name, "player", mine) then
         return true
     end
-    local expires = module.buffBeliefs[beliefKey]
+    local belief = module.buffBeliefs[beliefKey]
+    if status and status.readable then
+        if type(belief) == "table" and type(belief.appliedAt) == "number"
+            and now() - belief.appliedAt < 2 then
+            return true
+        end
+        module.buffBeliefs[beliefKey] = nil
+        return false
+    end
+    local expires = type(belief) == "table" and belief.expires or belief
+    if type(belief) == "table" and expires == nil then return true end
     return expires ~= nil and now() < expires
 end
 
@@ -571,7 +591,7 @@ end
 
 local function nextExtraSuggestion(env, specKey)
     if module:IsExtraSuggestionEnabled("lightning_shield")
-        and not buffActive(324, "lightning_shield") then
+        and not buffActive(324, "lightning_shield", true, "LightningShield") then
         local suggestion = canSuggestBuff(324)
         if suggestion then return suggestion end
     end
@@ -588,13 +608,15 @@ local function nextExtraSuggestion(env, specKey)
     end
 
     if module:IsExtraSuggestionEnabled("strength_of_earth")
-        and not buffActive(8075, "strength_of_earth", false) and not totemActive(8075) then
+        and not buffActive(8075, "strength_of_earth", false, "StrengthOfEarthAura")
+        and not totemActive(8075) then
         local suggestion = canSuggestBuff(8075)
         if suggestion then return suggestion end
     end
 
     if manaSpringNeeded(env) and module:IsExtraSuggestionEnabled("mana_spring")
-        and not buffActive(5675, "mana_spring", false) and not totemActive(5675) then
+        and not buffActive(5675, "mana_spring", false, "ManaSpringAura")
+        and not totemActive(5675) then
         local suggestion = canSuggestBuff(5675)
         if suggestion then return suggestion end
     end
@@ -604,7 +626,7 @@ end
 local function recordSuccessfulCast(spellID)
     local timestamp = now()
     local buffs = {
-        { 324, "lightning_shield", 600 },
+        { 324, "lightning_shield" },
         { 8024, "flametongue_weapon", 300 },
         { 8232, "windfury_weapon", 300 },
         { 16166, "lightning_mastery", 15 },
@@ -612,7 +634,10 @@ local function recordSuccessfulCast(spellID)
     }
     for _, info in ipairs(buffs) do
         if sameFamily(spellID, info[1]) then
-            module.buffBeliefs[info[2]] = timestamp + info[3]
+            module.buffBeliefs[info[2]] = {
+                expires = info[3] and timestamp + info[3] or nil,
+                appliedAt = timestamp,
+            }
         end
     end
     if sameFamily(spellID, 8050) then

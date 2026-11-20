@@ -150,28 +150,33 @@ function module.OnTargetChanged()
     module.WingClipBelief.applied = false
 end
 
-function module.RegisterCast(castName)
-    -- Nome secreto (cliente mascara dados em combate) não pode ser comparado.
-    if type(castName) ~= "string" or castName == "" then return end
-    if _G.issecretvalue and issecretvalue(castName) then return end
-    local base = castName:lower():gsub("%s*%b()%s*$", "")
+function module.RegisterCast(castName, castID)
+    if type(castName) ~= "string" or castName == ""
+        or (_G.issecretvalue and issecretvalue(castName)) then
+        castName = nil
+    end
+    if type(castID) ~= "number" or (_G.issecretvalue and issecretvalue(castID)) then
+        castID = nil
+    end
+    if not castName and not castID then return end
+    local base = castName and castName:lower():gsub("%s*%b()%s*$", "") or nil
     local function strip(id)
         local n = module.SpellName(id)
         if not n then return nil end
         return n:lower():gsub("%s*%b()%s*$", "")
     end
-    if strip(1130) == base then
+    if base and strip(1130) == base then
         module.MarkBelief.active = true
         module.MarkBelief.slot = markBeliefSlot
         return
     end
-    if strip(1978) == base then
+    if base and strip(1978) == base then
         module.SerpentStingBelief.applied = true
         module.SerpentStingBelief.slot = markBeliefSlot
         module.SerpentStingBelief.expires = GetTime() + 15
         return
     end
-    if strip(2974) == base then
+    if base and strip(2974) == base then
         module.WingClipBelief.applied = true
         module.WingClipBelief.slot = markBeliefSlot
         module.WingClipBelief.expires = GetTime() + 12
@@ -184,10 +189,17 @@ function module.RegisterCast(castName)
     -- aspects don't expire on their own, so the belief can outlive /reload.
     local ids = { 5118, 13159, 13161, 13163, 13165, 20043 }
     for _, id in ipairs(ids) do
-        if strip(id) == base then
-            module.AspectBelief = { active = true, name = base, id = id, time = GetTime() }
+        local knownID = module.Compat and module.Compat.HighestKnownSpellID
+            and module.Compat.HighestKnownSpellID(id)
+        local family = module.Compat and module.Compat.FamilyOf
+        local sameFamily = castID and family and family[castID] ~= nil
+            and family[castID] == family[id]
+        local idMatch = castID and (castID == id or (knownID and castID == knownID) or sameFamily)
+        if (base and strip(id) == base) or idMatch then
+            local aspectName = strip(id) or base or ""
+            module.AspectBelief = { active = true, name = aspectName, id = id, time = GetTime() }
             if module.charDb then
-                module.charDb.aspectBelief = { id = id, name = base, time = GetTime() }
+                module.charDb.aspectBelief = { id = id, name = aspectName, time = GetTime() }
             end
             return
         end

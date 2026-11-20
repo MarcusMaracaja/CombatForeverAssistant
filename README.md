@@ -22,11 +22,11 @@ control.
 
 | Area | State |
 |---|---|
-| Addon loads, `/cfa` menu (General / Key button / class / Equipment / About) | Working (tested in game); new Equipment tab needs in-game validation |
+| Addon loads, `/cfa` menu (General / Button / class / Equipment / About) | Working (tested in game); new Equipment tab needs in-game validation |
 | Menu settings persist — fixes the orphan-table bug where changes were written to a table detached from the SV global | Corrected (user-authored fix) — not yet verified in game |
-| Highlight: **circle** or **border** modes | Working (tested in game) |
+| Highlight: **circle**, **border**, **flame**, **lightning**, and **zoom** modes | New modes pending in-game validation |
 | Border width slider (0–60 px), single-color option, per-function colors | Working (tested in game) |
-| Key button (draggable widget showing the bound key, lock option, "always show", 6 fonts, size, background/text color, transparency, reset) | Working (tested in game) |
+| Button tab (highlight style/color, key-button visibility/position, widget size/font/colors/transparency) | Reorganized — pending in-game validation |
 | **Buff library** (`CFA.BuffLib`) — all 9 vanilla classes, all ranks, aura/cast IDs, tier tracking | Implemented — **aura reads rewritten to `C_UnitAuras.GetAuraDataByIndex`** (H-0185): `UnitBuff`/`UnitDebuff` don't exist on Forever; **not yet verified in game** |
 | **Hunter class module (SV / BM / MM)** — declarative rotation, spec detection via **C_Traits ordinals** (tested in game: `spec: C_Traits F=0 M=0 S=10`), Castable engine + aura beliefs + persistent aspect belief | Working — **rotation now recommends in game** (H-0196): the castability gate was called with the wrong convention (`self`/`z` mix-up), which silently rejected every combat spell and left only the aspect flashing |
 | **Hunter rotation** — aspects (Cheetah/Hawk/Beast/Monkey/Pack), Hunter's Mark, Concussive Shot, pet management, spec rotation (Aimed Shot / Serpent Sting / Arcane Shot / Multi-Shot / Rapid Fire / Mongoose / Raptor / Disengage), racial, Auto Shot as filler | Working — **verified in game by the user** (H-0196/H-0197); dead zone (5–10 yd) now triggers **Disengage** |
@@ -86,6 +86,11 @@ control.
 - **H-0213** — Added the Shaman module: Elemental/Enhancement priorities, automatic or manual
   talent-tree selection, and independently configurable buff recommendations. The Restoration
   tree currently uses a caster-DPS fallback (no healing). Needs in-game testing.
+- **H-0214** — Grouped highlight style, key-button controls, appearance, and test in a
+  scrollable **Button** tab; General now contains only general settings.
+- **H-0215** — Improved cooldown checks (including action-bar reads and spell ranks), kept
+  Hunter aspects and Shaman buffs eligible until confirmed active, and added flame, lightning,
+  and zoom highlight modes. New behavior still needs in-game validation.
 
 > **Saved variables:** settings persist on `/reload` (and on logout/clean exit), like any
 > Blizzard client. An earlier bug made menu changes persist nowhere: `addon.db` was bound
@@ -143,13 +148,17 @@ Rules are saved per character. Availability depends on the client exposing the i
 metadata, so new/custom items still need a real client test.
 
 The Hunter rotation editor's **Extra** tab lets you enable or disable Cheetah, Pack, Monkey,
-Beast and Hawk suggestions independently of the talent specialization. Other class-specific
-buff controls are not implemented until those class modules return to the build.
+Beast and Hawk suggestions independently of the talent specialization. The rotation remains
+the primary suggestion; enabled aspects continue as extra hints until an aspect is active.
+Shaman has its own Extra buff controls; other class-specific buff controls remain pending.
 
 ### Highlight modes
 
 - **Circle** — a dashed colored ring around the recommended button (native textures).
 - **Border** — a colored frame around the button (4 edge bars, 0–60 px wide).
+- **Flame** — an animated flame frame around the button.
+- **Lightning** — an animated lightning overlay around the button.
+- **Zoom** — a pulsing, expanding border.
 
 ### Installation
 
@@ -180,15 +189,15 @@ interrupção, defensivo, utilidade) ou uma cor única escolhida por você.
 
 Ele **não** aperta a tecla por você — apenas destaca o botão. Você continua no controle.
 
-### Status — desenvolvimento inicial (rotação do Hunter funcionando, outras classes pendentes)
+### Status — Hunter e Shaman disponíveis para teste; outras classes pendentes
 
 | Área | Estado |
 |---|---|
-| Addon carrega, menu `/cfa` (Geral / Botão de tecla / Equipamentos / Sobre) | Funcionando (testado em jogo); aba Equipamentos precisa de validação em jogo |
+| Addon carrega, menu `/cfa` (Geral / Botão / classe / Equipamentos / Sobre) | Funcionando (testado em jogo); aba Equipamentos precisa de validação em jogo |
 | Configurações do menu persistem — corrige o bug da tabela órfã (mudanças iam para uma tabela desconectada do global de SV) | Corrigido (correção do usuário) — ainda não verificado em jogo |
-| Destaque: **círculo** ou **moldura** | Funcionando (testado em jogo) |
+| Destaque: **círculo**, **moldura**, **chama**, **raio** e **zoom** | Novos modos aguardam validação em jogo |
 | Slider de largura da moldura (0–60 px), cor única, cores por função | Funcionando (testado em jogo) |
-| Botão de tecla (widget arrastável mostrando a tecla, trava, "sempre exibir", 6 fontes, tamanho, cor de fundo/texto, transparência, restaurar padrões) | Funcionando (testado em jogo) |
+| Aba Botão (estilo/cor do destaque, exibição/posição do botão de tecla, tamanho/fonte/cores/transparência do widget) | Reorganizada — aguardando validação em jogo |
 | **Biblioteca de buffs** (`CFA.BuffLib`) — as 9 classes vanilla, todos os ranks, IDs de aura/cast, tiers, aviso de buff desatualizado | Implementada — **leitura de auras reescrita para `C_UnitAuras.GetAuraDataByIndex`** (H-0185): `UnitBuff`/`UnitDebuff` não existem no Forever; **ainda não verificada em jogo** |
 | **Módulo Hunter (SV / BM / MM)** — rotação declarativa, detecção de spec via **ordinals de `treeIDs` do C_Traits** (testada em jogo: `spec: C_Traits F=0 M=0 S=10`), engine de Castable + crenças de aura + crença de aspecto persistente | Funcionando — **a rotação agora recomenda em jogo** (H-0196): o gate de castabilidade era chamado com a convenção errada (`self`/`z` trocados), recusando silenciosamente todas as spells de combate e deixando só o aspecto piscar |
 | **Rotação do Hunter** — aspectos (Guepardo/Falcão/Fera/Macaco/Matilha), Marca do Caçador, Tiro Concussivo, gestão do pet, rotação da spec (Disparo Preciso / Mordida de Serpente / Disparo Arcano / Disparo Múltiplo / Disparo Rápido / Mordida de Mongoose / Golpe de Raptor / Fuga), racial e Tiro Automático como filler | Funcionando — **verificado em jogo pelo usuário** (H-0196/H-0197); a zona morta (5–10 yd) agora dispara o **Fuga (Disengage)** |
@@ -245,6 +254,11 @@ Ele **não** aperta a tecla por você — apenas destaca o botão. Você continu
 - **H-0213** — Adicionado o módulo Shaman: prioridades Elemental/Enhancement, seleção automática
   ou manual da árvore e recomendações de buffs Extra independentes. Restauração usa fallback
   caster de dano (sem cura automatizada). Precisa de teste em jogo.
+- **H-0214** — Reunidos o estilo do destaque, os controles do botão de tecla, aparência e teste
+  numa aba **Botão** com rolagem; Geral ficou apenas com configurações gerais.
+- **H-0215** — Melhorada a leitura de cooldowns (incluindo barra de ação e ranks), mantidas as
+  sugestões de aspectos do Hunter e buffs do Shaman até a confirmação de que estão ativos, e
+  adicionados os destaques de chama, raio e zoom. As novidades ainda precisam de teste em jogo.
 
 > **Variáveis salvas:** as configurações persistem no `/reload` (e no logout/saída limpa),
 > como em qualquer cliente Blizzard. Um bug anterior fazia as mudanças sumirem: `addon.db`
@@ -305,13 +319,17 @@ metadados do slot, então ainda precisam de teste real.
 Na aba **Extra** do editor de rotação Hunter, é possível ativar ou desativar independentemente da
 especialização as recomendações de Guepardo, Matilha, Macaco, Fera e Falcão. Essa aba não usa cards
 com condições editáveis: aspectos são avaliados pela lógica global do Hunter, com regras automáticas
-de grupo/combate/alvo. Controles de buffs específicos de outras classes ficam pendentes até esses
-módulos voltarem ao build.
+de grupo/combate/alvo. A rotação continua como sugestão principal; aspectos habilitados seguem como
+dicas extras até um ficar ativo. O Shaman tem seus próprios controles de buffs Extra; as demais
+classes ainda estão pendentes.
 
 ### Modos de destaque
 
 - **Círculo** — anel segmentado colorido em volta do botão (texturas nativas).
 - **Moldura** — moldura colorida em volta do botão (4 barras, 0–60 px de largura).
+- **Chama** — moldura animada de chamas em volta do botão.
+- **Raio** — efeito animado de raios em volta do botão.
+- **Zoom** — moldura que pulsa e se expande.
 
 ### Instalação
 

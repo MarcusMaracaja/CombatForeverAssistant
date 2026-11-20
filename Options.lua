@@ -16,6 +16,8 @@ local currentTab = "general"
 
 local PANEL_W, PANEL_H = 520, 420
 local SIDE_W = 128
+local CONTENT_W, CONTENT_H = PANEL_W - SIDE_W - 18, PANEL_H - 54
+local SCROLLBAR_W = 24
 local ORANGE = { 1.0, 0.55, 0.10 }
 local BG = { 0.02, 0.02, 0.02, 1.0 }
 
@@ -234,7 +236,7 @@ function Options.Toggle()
 end
 
 -- ---------------------------------------------------------------------------
--- Key button tab
+-- Button tab
 -- ---------------------------------------------------------------------------
 local BG_SWATCHES = {
     { 0.05, 0.05, 0.05 }, -- near-black (default)
@@ -253,6 +255,24 @@ local function eq3(a, b)
 end
 
 function buildKeyButtonTab(parent)
+    local scroll = CreateFrame("ScrollFrame", nil, parent, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, 0)
+    scroll:SetSize(CONTENT_W, CONTENT_H)
+    scroll:EnableMouseWheel(true)
+
+    local content = CreateFrame("Frame", nil, scroll)
+    content:SetPoint("TOPLEFT", scroll, "TOPLEFT", 0, 0)
+    content:SetSize(CONTENT_W - SCROLLBAR_W - 4, 760)
+    scroll:SetScrollChild(content)
+    content:Show()
+    scroll:Show()
+    scroll:SetScript("OnMouseWheel", function(self, delta)
+        local current = self:GetVerticalScroll() or 0
+        local maximum = self:GetVerticalScrollRange() or 0
+        self:SetVerticalScroll(math.max(0, math.min(maximum, current - delta * 32)))
+    end)
+
+    parent = content
     local y = -8
     local KB = addon.KeyButton
 
@@ -262,6 +282,22 @@ function buildKeyButtonTab(parent)
         fs:SetTextColor(ORANGE[1], ORANGE[2], ORANGE[3], 1)
         fs:SetText(text)
         y = y - 22
+    end
+
+    local function checkbox(label, getter, setter)
+        local button = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
+        button:SetWidth(22)
+        button:SetHeight(22)
+        button:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
+        button:SetChecked(getter() and true or false)
+        button:SetScript("OnClick", function(self)
+            setter(self:GetChecked() and true or false)
+        end)
+        local text = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        text:SetPoint("LEFT", button, "RIGHT", 4, 0)
+        text:SetText(label)
+        y = y - 26
+        return button
     end
 
     local function makeSlider(minV, maxV, initial, onChange, fmt)
@@ -344,6 +380,63 @@ function buildKeyButtonTab(parent)
         return refresh
     end
 
+    -- Highlight and key-button behavior
+    header(L["opt_visual_mode"])
+    local modeRadios = {}
+    local function refreshRadios()
+        local mode = addon.db.visualMode or "circle"
+        for otherMode, button in pairs(modeRadios) do
+            button:SetChecked(otherMode == mode)
+        end
+    end
+    local function radio(label, mode)
+        local button = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
+        button:SetWidth(22)
+        button:SetHeight(22)
+        button:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
+        modeRadios[mode] = button
+        button:SetChecked((addon.db.visualMode or "circle") == mode)
+        button:SetScript("OnClick", function()
+            addon.db.visualMode = mode
+            refreshRadios()
+        end)
+        local text = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        text:SetPoint("LEFT", button, "RIGHT", 4, 0)
+        text:SetText(label)
+        y = y - 26
+    end
+    radio(L["opt_visual_circle"], "circle")
+    radio(L["opt_visual_border"], "border")
+    radio(L["opt_visual_flame"], "flame")
+    radio(L["opt_visual_lightning"], "lightning")
+    radio(L["opt_visual_zoom"], "zoom")
+
+    local borderLabel = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    borderLabel:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
+    borderLabel:SetText(L["opt_border_width"] .. ":")
+    y = y - 18
+    makeSlider(0, 60, addon.db.borderWidth or 12,
+        function(width) addon.db.borderWidth = width end,
+        function(width) return tostring(width) .. " px" end)
+
+    checkbox(L["opt_key_button"],
+        function() return addon.db.keyButton end,
+        function(value) addon.db.keyButton = value end)
+    checkbox(L["opt_key_button_always"],
+        function() return addon.db.keyButtonAlways end,
+        function(value)
+            addon.db.keyButtonAlways = value
+            if value and addon.KeyButton then addon.KeyButton.ShowPlaceholder() end
+            if not value and addon.KeyButton then addon.KeyButton.Hide() end
+        end)
+    checkbox(L["opt_lock_key_button"],
+        function() return addon.db.keyButtonLocked end,
+        function(value)
+            addon.db.keyButtonLocked = value
+            if addon.KeyButton then addon.KeyButton.ApplyLock() end
+        end)
+    y = y - 8
+
     -- Size
     header(L["opt_key_size"] .. ":")
     local sizeSlider = makeSlider(24, 128, addon.db.keySize or 46,
@@ -388,6 +481,89 @@ function buildKeyButtonTab(parent)
         function() return addon.db.keyTextColor end,
         function(rgb) addon.db.keyTextColor = { rgb[1], rgb[2], rgb[3] }; KB.ApplyLook() end)
 
+    local refreshSwatches
+    local singleCheck
+    singleCheck = checkbox(L["opt_single_color"],
+        function() return addon.db.useSingleColor end,
+        function(value)
+            addon.db.useSingleColor = value
+            if refreshSwatches then refreshSwatches() end
+        end)
+
+    local swatches = {}
+    refreshSwatches = function()
+        local selected = addon.db.singleColorIndex or 2
+        for i, swatch in ipairs(swatches) do
+            if addon.db.useSingleColor and i == selected then
+                swatch.sel:Show()
+            else
+                swatch.sel:Hide()
+            end
+        end
+    end
+    for i, rgb in ipairs(addon.Visuals.PresetColors) do
+        local swatch = CreateFrame("Button", nil, parent)
+        swatch:SetWidth(22)
+        swatch:SetHeight(22)
+        swatch:SetPoint("TOPLEFT", parent, "TOPLEFT", 6 + (i - 1) * 28, y)
+        swatch.sel = swatch:CreateTexture(nil, "BORDER")
+        swatch.sel:SetTexture("Interface\\Buttons\\WHITE8X8")
+        swatch.sel:SetVertexColor(1, 1, 1, 1)
+        swatch.sel:SetWidth(26)
+        swatch.sel:SetHeight(26)
+        swatch.sel:SetPoint("CENTER", swatch, "CENTER", 0, 0)
+        swatch.bg = swatch:CreateTexture(nil, "ARTWORK")
+        swatch.bg:SetTexture("Interface\\Buttons\\WHITE8X8")
+        swatch.bg:SetVertexColor(rgb[1], rgb[2], rgb[3], 1)
+        swatch.bg:SetWidth(22)
+        swatch.bg:SetHeight(22)
+        swatch.bg:SetPoint("CENTER", swatch, "CENTER", 0, 0)
+        swatch:SetScript("OnClick", function()
+            addon.db.useSingleColor = true
+            addon.db.singleColorIndex = i
+            if singleCheck then singleCheck:SetChecked(true) end
+            refreshSwatches()
+        end)
+        swatches[i] = swatch
+    end
+    refreshSwatches()
+    y = y - 30
+
+    local test = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    test:SetWidth(140)
+    test:SetHeight(22)
+    test:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
+    test:SetText(L["opt_test"])
+    test:SetScript("OnClick", function()
+        local _, id = GetActionInfo(1)
+        if id and addon.Visuals then
+            addon.Visuals.Show(id, "Utility")
+            if addon.KeyButton then
+                local had = addon.KeyButton.ShowFor(id)
+                if not had then print(L["key_button_no_key"]) end
+            end
+            local elapsed = 0
+            local timer = CreateFrame("Frame")
+            timer:SetScript("OnUpdate", function(self, delta)
+                elapsed = elapsed + delta
+                if elapsed > 1.5 then
+                    addon.Visuals.Hide()
+                    if addon.KeyButton then
+                        if addon.db.keyButtonAlways then
+                            addon.KeyButton.ShowPlaceholder()
+                        else
+                            addon.KeyButton.Hide()
+                        end
+                    end
+                    self:SetScript("OnUpdate", nil)
+                end
+            end)
+        else
+            print(L["slash_help"])
+        end
+    end)
+    y = y - 34
+
     -- Hint
     local hint = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
     hint:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
@@ -417,14 +593,6 @@ end
 function buildGeneralTab(parent)
     local y = -8
 
-    local function header(text)
-        local fs = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-        fs:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
-        fs:SetTextColor(ORANGE[1], ORANGE[2], ORANGE[3], 1)
-        fs:SetText(text)
-        y = y - 22
-    end
-
     local function checkbox(label, getter, setter)
         local b = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
         b:SetWidth(22)
@@ -439,192 +607,9 @@ function buildGeneralTab(parent)
         return b
     end
 
-    header(L["opt_visual_mode"])
-
-    local modeRadios = {}
-    local function refreshRadios()
-        local mode = addon.db.visualMode or "circle"
-        for otherMode, btn in pairs(modeRadios) do
-            btn:SetChecked(otherMode == mode)
-        end
-    end
-
-    local function radio(label, mode)
-        local b = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
-        b:SetWidth(22)
-        b:SetHeight(22)
-        b:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
-        modeRadios[mode] = b
-        b:SetChecked((addon.db.visualMode or "circle") == mode)
-        b:SetScript("OnClick", function()
-            addon.db.visualMode = mode
-            refreshRadios()
-        end)
-        local fs = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-        fs:SetPoint("LEFT", b, "RIGHT", 4, 0)
-        fs:SetText(label)
-        y = y - 26
-    end
-
-    radio(L["opt_visual_circle"], "circle")
-    radio(L["opt_visual_border"], "border")
-
-    -- Border width (0-60 px), applies to both circle and frame modes
-    local bwLabel = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    bwLabel:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
-    bwLabel:SetText(L["opt_border_width"] .. ":")
-    y = y - 18
-
-    local slider = CreateFrame("Slider", nil, parent)
-    slider:SetOrientation("HORIZONTAL")
-    slider:SetMinMaxValues(0, 60)
-    slider:SetValueStep(1)
-    pcall(function() slider:SetObeyStepOnDrag(true) end)
-    slider:SetWidth(170)
-    slider:SetHeight(18)
-    slider:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
-
-    local track = slider:CreateTexture(nil, "BACKGROUND")
-    track:SetTexture("Interface\\Buttons\\WHITE8X8")
-    track:SetVertexColor(0.18, 0.18, 0.18, 0.95)
-    track:SetPoint("LEFT", slider, "LEFT", 0, 0)
-    track:SetPoint("RIGHT", slider, "RIGHT", 0, 0)
-    track:SetPoint("CENTER", slider, "CENTER", 0, 0)
-    track:SetHeight(6)
-
-    slider:SetThumbTexture("Interface\\Buttons\\WHITE8X8")
-    local thumb = slider:GetThumbTexture()
-    if thumb then
-        thumb:SetWidth(12)
-        thumb:SetHeight(18)
-        thumb:SetVertexColor(ORANGE[1], ORANGE[2], ORANGE[3], 1)
-    end
-
-    local valFS = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    valFS:SetPoint("LEFT", slider, "RIGHT", 8, 0)
-    valFS:SetTextColor(1, 0.9, 0.6, 1)
-    local function updateVal(v) valFS:SetText(tostring(math.floor(v)) .. " px") end
-    slider:SetScript("OnValueChanged", function(self, v)
-        local w = math.floor(v)
-        addon.db.borderWidth = w
-        updateVal(w)
-    end)
-    slider:EnableMouseWheel(true)
-    slider:SetScript("OnMouseWheel", function(self, delta)
-        self:SetValue(math.max(0, math.min(60, self:GetValue() + (delta > 0 and 1 or -1))))
-    end)
-    slider:SetValue(addon.db.borderWidth or 12)
-    y = y - 34
-
-    checkbox(L["opt_key_button"],
-        function() return addon.db.keyButton end,
-        function(v) addon.db.keyButton = v end)
-
-    checkbox(L["opt_key_button_always"],
-        function() return addon.db.keyButtonAlways end,
-        function(v)
-            addon.db.keyButtonAlways = v
-            if v and addon.KeyButton then addon.KeyButton.ShowPlaceholder() end
-            if not v and addon.KeyButton then addon.KeyButton.Hide() end
-        end)
-
-    checkbox(L["opt_lock_key_button"],
-        function() return addon.db.keyButtonLocked end,
-        function(v)
-            addon.db.keyButtonLocked = v
-            if addon.KeyButton then addon.KeyButton.ApplyLock() end
-        end)
-
     checkbox(L["opt_warn_outdated"],
         function() return addon.db.warnOutdated end,
         function(v) addon.db.warnOutdated = v end)
-
-    -- Single highlight color (otherwise colors are per suggestion kind)
-    local refreshSwatches
-    local singleCheck
-    singleCheck = checkbox(L["opt_single_color"],
-        function() return addon.db.useSingleColor end,
-        function(v)
-            addon.db.useSingleColor = v
-            if refreshSwatches then refreshSwatches() end
-        end)
-
-    local swatches = {}
-    refreshSwatches = function()
-        local sel = addon.db.singleColorIndex or 2
-        for i, s in ipairs(swatches) do
-            if addon.db.useSingleColor and i == sel then
-                s.sel:Show()
-            else
-                s.sel:Hide()
-            end
-        end
-    end
-
-    for i, rgb in ipairs(addon.Visuals.PresetColors) do
-        local s = CreateFrame("Button", nil, parent)
-        s:SetWidth(22)
-        s:SetHeight(22)
-        s:SetPoint("TOPLEFT", parent, "TOPLEFT", 6 + (i - 1) * 28, y)
-        s.sel = s:CreateTexture(nil, "BORDER")
-        s.sel:SetTexture("Interface\\Buttons\\WHITE8X8")
-        s.sel:SetVertexColor(1, 1, 1, 1)
-        s.sel:SetWidth(26)
-        s.sel:SetHeight(26)
-        s.sel:SetPoint("CENTER", s, "CENTER", 0, 0)
-        s.bg = s:CreateTexture(nil, "ARTWORK")
-        s.bg:SetTexture("Interface\\Buttons\\WHITE8X8")
-        s.bg:SetVertexColor(rgb[1], rgb[2], rgb[3], 1)
-        s.bg:SetWidth(22)
-        s.bg:SetHeight(22)
-        s.bg:SetPoint("CENTER", s, "CENTER", 0, 0)
-        s:SetScript("OnClick", function()
-            addon.db.useSingleColor = true
-            addon.db.singleColorIndex = i
-            if singleCheck then singleCheck:SetChecked(true) end
-            refreshSwatches()
-        end)
-        swatches[i] = s
-    end
-    refreshSwatches()
-    y = y - 30
-
-    -- Test highlight: flashes the first spell in your spellbook for 1.5s
-    local test = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-    test:SetWidth(140)
-    test:SetHeight(22)
-    test:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
-    test:SetText(L["opt_test"])
-    test:SetScript("OnClick", function()
-        local _, id = GetActionInfo(1)
-        if id and addon.Visuals then
-            addon.Visuals.Show(id, "Utility")
-            if addon.KeyButton then
-                local had = addon.KeyButton.ShowFor(id)
-                if not had then print(L["key_button_no_key"]) end
-            end
-            local t = 0
-            local ff = CreateFrame("Frame")
-            ff:SetScript("OnUpdate", function(self, d)
-                t = t + d
-                if t > 1.5 then
-                    addon.Visuals.Hide()
-                    if addon.KeyButton then
-                        if addon.db.keyButtonAlways then
-                            addon.KeyButton.ShowPlaceholder()
-                        else
-                            addon.KeyButton.Hide()
-                        end
-                    end
-                    self:SetScript("OnUpdate", nil)
-                end
-            end)
-        else
-            -- no spell in slot 1: flash nothing
-            print(L["slash_help"])
-        end
-    end)
-    y = y - 34
 
     local save = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
     save:SetWidth(140)

@@ -2,8 +2,8 @@
 -- Two highlight modes, drawn on the action button itself:
 --   "circle": a dashed colored ring over the button (native textures, no art files)
 --   "border": a colored frame around the button (4 edge bars)
--- No glow/flash effects. Border width applies to both modes.
--- Colors: per suggestion kind, or a single user-picked color (Options > General).
+--   "flame"/"lightning": animated custom overlays; "zoom": pulsing frame.
+-- Colors: per suggestion kind, or a single user-picked color (Options > Button).
 
 local addonName, addon = ...
 local L = addon.L
@@ -42,6 +42,7 @@ local buttonMap = {}
 local itemButtonMap
 local highlighted = {}
 local mapDirty = true
+local shownSignature
 
 local function iterActionButtons(fn)
     for _, pattern in ipairs(BUTTON_PATTERNS) do
@@ -75,6 +76,7 @@ end
 function Visuals.RefreshMap()
     mapDirty = true
     itemButtonMap = nil
+    shownSignature = nil
 end
 
 function Visuals.BuildMap()
@@ -183,6 +185,7 @@ end
 local function makeBorderOverlay(btn, rgb, width)
     local f = CreateFrame("Frame", nil, btn)
     f:SetAllPoints(btn)
+    f:SetFrameLevel(btn:GetFrameLevel() + 5)
     local w = math.max(1, math.floor(width or 12))
     local bw = btn:GetWidth()
     local bh = btn:GetHeight()
@@ -209,12 +212,50 @@ local function makeBorderOverlay(btn, rgb, width)
     return f
 end
 
+local function makeTextureOverlay(btn, textureFile, rgb)
+    local f = CreateFrame("Frame", nil, btn)
+    f:SetFrameLevel(btn:GetFrameLevel() + 5)
+    local size = math.max(btn:GetWidth(), btn:GetHeight()) * 1.45
+    f:SetSize(size, size)
+    f:SetPoint("CENTER", btn, "CENTER")
+    local texture = f:CreateTexture(nil, "OVERLAY")
+    texture:SetAllPoints(f)
+    texture:SetTexture("Interface\\AddOns\\" .. addonName .. "\\Textures\\" .. textureFile)
+    texture:SetBlendMode("ADD")
+    texture:SetVertexColor(rgb[1], rgb[2], rgb[3], 1)
+
+    local pulse = f:CreateAnimationGroup()
+    pulse:SetLooping("BOUNCE")
+    local alpha = pulse:CreateAnimation("Alpha")
+    alpha:SetFromAlpha(0.55)
+    alpha:SetToAlpha(1)
+    alpha:SetDuration(0.42)
+    f.pulse = pulse
+    pulse:Play()
+    return f
+end
+
+local function makeZoomOverlay(btn, rgb, width)
+    local f = makeBorderOverlay(btn, rgb, width)
+    local pulse = f:CreateAnimationGroup()
+    pulse:SetLooping("BOUNCE")
+    local scale = pulse:CreateAnimation("Scale")
+    scale:SetFromScale(1, 1)
+    scale:SetToScale(1.18, 1.18)
+    scale:SetDuration(0.36)
+    f.pulse = pulse
+    pulse:Play()
+    return f
+end
+
 function Visuals.Clear()
     for btn, overlay in pairs(highlighted) do
+        if overlay.pulse then overlay.pulse:Stop() end
         overlay:Hide()
         overlay:SetParent(nil)
     end
     highlighted = {}
+    shownSignature = nil
 end
 
 local function showButtons(buttons, reason)
@@ -231,6 +272,12 @@ local function showButtons(buttons, reason)
             local overlay
             if mode == "border" then
                 overlay = makeBorderOverlay(btn, rgb, width)
+            elseif mode == "flame" then
+                overlay = makeTextureOverlay(btn, "Highlight_Flame.tga", rgb)
+            elseif mode == "lightning" then
+                overlay = makeTextureOverlay(btn, "Highlight_Lightning.tga", rgb)
+            elseif mode == "zoom" then
+                overlay = makeZoomOverlay(btn, rgb, width)
             else
                 local btnW = btn:GetWidth()
                 overlay = Visuals.DashRing(btn, btnW * 0.68, math.max(3, math.min(24, width * 0.5 + 3)), rgb, 14)
@@ -256,8 +303,30 @@ end
 
 function Visuals.ShowMany(suggestions)
     ensureMap()
+    if type(suggestions) ~= "table" then
+        Visuals.Clear()
+        return
+    end
+    local signature = {
+        tostring(addon.db.visualMode or "circle"),
+        tostring(addon.db.borderWidth or 12),
+        tostring(addon.db.useSingleColor),
+        tostring(addon.db.singleColorIndex or 2),
+    }
+    for _, suggestion in ipairs(suggestions) do
+        if type(suggestion) == "table" then
+            signature[#signature + 1] = table.concat({
+                tostring(suggestion.kind or "spell"),
+                tostring(suggestion.spellID or ""),
+                tostring(suggestion.itemID or ""),
+                tostring(suggestion.color or suggestion.reason or "Utility"),
+            }, ":")
+        end
+    end
+    local key = table.concat(signature, "|")
+    if key == shownSignature then return end
     Visuals.Clear()
-    if type(suggestions) ~= "table" then return end
+    shownSignature = key
     for _, suggestion in ipairs(suggestions) do
         if type(suggestion) == "table" then
             if suggestion.kind == "item" then

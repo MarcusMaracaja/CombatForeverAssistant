@@ -59,9 +59,10 @@ trackerFrame:SetScript("OnEvent", function(_, event, ...)
         if type(spellID) == "number" and not (_G.issecretvalue and issecretvalue(spellID))
             and module.Compat and module.Compat.SpellInfoByID then
             local name = module.Compat.SpellInfoByID(spellID)
-            if type(name) == "string" and not (_G.issecretvalue and issecretvalue(name)) then
-                pcall(module.RegisterCast, name)
+            if type(name) ~= "string" or (_G.issecretvalue and issecretvalue(name)) then
+                name = nil
             end
+            pcall(module.RegisterCast, name, spellID)
         end
     end
 end)
@@ -628,6 +629,7 @@ function module:Suggest(spellID, color)
     local suggestion = { spellID = knownID or spellID, color = color or "Utility" }
     local aspect = module.PendingAspectSuggestion
     if aspect and aspect.spellID ~= suggestion.spellID then
+        -- Keep the rotation as the primary suggestion while the aspect stays secondary.
         suggestion.additional = { aspect }
     end
     module.PendingSuggestion = suggestion
