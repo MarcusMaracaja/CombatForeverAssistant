@@ -30,6 +30,7 @@ control.
 | **Buff library** (`CFA.BuffLib`) — all 9 vanilla classes, all ranks, aura/cast IDs, tier tracking | Implemented — **aura reads rewritten to `C_UnitAuras.GetAuraDataByIndex`** (H-0185): `UnitBuff`/`UnitDebuff` don't exist on Forever; **not yet verified in game** |
 | **Hunter class module (SV / BM / MM)** — declarative rotation, spec detection via **C_Traits ordinals** (tested in game: `spec: C_Traits F=0 M=0 S=10`), Castable engine + aura beliefs + persistent aspect belief | Working — **rotation now recommends in game** (H-0196): the castability gate was called with the wrong convention (`self`/`z` mix-up), which silently rejected every combat spell and left only the aspect flashing |
 | **Hunter rotation** — aspects (Cheetah/Hawk/Beast/Monkey/Pack), Hunter's Mark, Concussive Shot, pet management, spec rotation (Aimed Shot / Serpent Sting / Arcane Shot / Multi-Shot / Rapid Fire / Mongoose / Raptor / Disengage), racial, Auto Shot as filler | Working — **verified in game by the user** (H-0196/H-0197); dead zone (5–10 yd) now triggers **Disengage** |
+| **Hunter spell range lookup** — reachability, cooldown and usability must not share the same rank identifier | **H-0201** corrects the post-H-0200 regression: range is queried by base name, while cooldown/usability use the resolved known ID. The differential regression and all local suites pass; **in-game recheck pending** |
 | **Druid class module (Feral / Balance / Restoration)** — form-aware rotations (Cat/Bear), Moonkin/Insect Swarm/Moonfire, Frenzied Regeneration, Demoralizing Roar, auto-buffs and racial | Implemented (H-0199) and hardened (H-0200) — **48 numbered regression scenarios plus direct assertions pass**; in-game verification pending |
 | **Global racial system** — every race/class combination of WoW Forever (Human, Dwarf, Night Elf, Gnome, Orc, Undead, Tauren, Troll, Skyborne) | Implemented (H-0189/H-0190) — shared by class modules with an enforced class whitelist; low priority: only suggests when the rotation has nothing else to say |
 | **Debug commands** — `/cfa debug` (on/off + rotation report), `/cfa debug on|off`, `/cfa probe` (client API dump) | Implemented (H-0196/H-0199/H-0200) — prints the reason every node was rejected; Druid report also shows talent-tree points/signatures and respects each node's self-cast options |
@@ -84,6 +85,13 @@ control.
   **Validation:** 48 numbered Druid scenarios plus direct assertions, 22 Hunter
   scenarios, shared-store assertions, and all 30 Lua files parsed as Lua 5.1.
   In-game verification remains pending.
+- **H-0201** — **Hunter range regression after H-0200**: reachability was queried with a
+  numeric rank ID, and a stale rank could return `false` even when the current rank was in
+  range. The gate now queries both `SpellHasRange` and `IsSpellInRangeEx` by **base name**;
+  the resolved known ID remains in use for cooldown and usability. Physical target distance
+  is unchanged. **Validation:** the differential fengari regression fails before the fix and
+  passes after it; the Hunter, Druid and shared-store suites also pass, and all 30 Lua files
+  parse as Lua 5.1. **In-game recheck pending.**
 
 > **Saved variables:** settings persist on `/reload` (and on logout/clean exit), like any
 > Blizzard client. An earlier bug made menu changes persist nowhere: `addon.db` was bound
@@ -199,6 +207,7 @@ Ele **não** aperta a tecla por você — apenas destaca o botão. Você continu
 | **Biblioteca de buffs** (`CFA.BuffLib`) — as 9 classes vanilla, todos os ranks, IDs de aura/cast, tiers, aviso de buff desatualizado | Implementada — **leitura de auras reescrita para `C_UnitAuras.GetAuraDataByIndex`** (H-0185): `UnitBuff`/`UnitDebuff` não existem no Forever; **ainda não verificada em jogo** |
 | **Módulo Hunter (SV / BM / MM)** — rotação declarativa, detecção de spec via **ordinals de `treeIDs` do C_Traits** (testada em jogo: `spec: C_Traits F=0 M=0 S=10`), engine de Castable + crenças de aura + crença de aspecto persistente | Funcionando — **a rotação agora recomenda em jogo** (H-0196): o gate de castabilidade era chamado com a convenção errada (`self`/`z` trocados), recusando silenciosamente todas as spells de combate e deixando só o aspecto piscar |
 | **Rotação do Hunter** — aspectos (Guepardo/Falcão/Fera/Macaco/Matilha), Marca do Caçador, Tiro Concussivo, gestão do pet, rotação da spec (Disparo Preciso / Mordida de Serpente / Disparo Arcano / Disparo Múltiplo / Disparo Rápido / Mordida de Mongoose / Golpe de Raptor / Fuga), racial e Tiro Automático como filler | Funcionando — **verificado em jogo pelo usuário** (H-0196/H-0197); a zona morta (5–10 yd) agora dispara o **Fuga (Disengage)** |
+| **Consulta de alcance da spell do Hunter** — alcance, cooldown e usabilidade não devem usar o mesmo identificador de rank | A **H-0201** corrige a regressão posterior à H-0200: o alcance é consultado pelo nome-base, enquanto cooldown/usabilidade usam o ID conhecido resolvido. A regressão diferencial e todas as suítes locais passam; **revalidação em jogo pendente** |
 | **Módulo Druid (Feral / Equilíbrio / Restauração)** — rotações por forma (Gato/Urso), Lua/Enxame de Insetos/Lua de Fogo, Regeneração Frenética, Rugido Demoralizador, auto-buffs e racial | Implementado (H-0199) e endurecido (H-0200) — **48 cenários numerados de regressão mais assertions diretas passam**; verificação em jogo pendente |
 | **Sistema global de raciais** — todas as combinações de raça/classe do WoW Forever (Humano, Anão, Elfo Noturno, Gnomo, Orc, Morto-vivo, Tauren, Troll, Skyborne) | Implementado (H-0189/H-0190) — compartilhado pelos módulos de classe com whitelist de classe aplicada; baixa prioridade: só sugere quando a rotação não tem nada a dizer |
 | **Comandos de debug** — `/cfa debug` (liga/desliga + relatório da rotação), `/cfa debug on|off`, `/cfa probe` (dump das APIs do cliente) | Implementado (H-0196/H-0199/H-0200) — mostra o motivo de cada nó recusado; o relatório do Druid também mostra pontos/assinatura das árvores e respeita as opções de spell self de cada nó |
@@ -252,6 +261,13 @@ Ele **não** aperta a tecla por você — apenas destaca o botão. Você continu
   **Validação:** 48 cenários numerados do Druid mais assertions diretas, 22 cenários do Hunter,
   assertions do store compartilhado e todos os 30 arquivos Lua validados como Lua 5.1.
   A verificação em jogo continua pendente.
+- **H-0201** — **regressão de alcance do Hunter após a H-0200**: o alcance era consultado por um
+  ID numérico de rank, e um rank antigo podia devolver `false` mesmo com o rank vigente em
+  alcance. O gate agora consulta `SpellHasRange` e `IsSpellInRangeEx` pelo **nome-base**; o ID
+  conhecido resolvido continua sendo usado para cooldown e usabilidade. A distância física do
+  alvo não foi alterada. **Validação:** a regressão diferencial em fengari falha antes da correção
+  e passa depois; as suítes do Hunter, Druid e store compartilhado também passam, e todos os 30
+  arquivos Lua são analisados como Lua 5.1. **Revalidação em jogo pendente.**
 
 > **Variáveis salvas:** as configurações persistem no `/reload` (e no logout/saída limpa),
 > como em qualquer cliente Blizzard. Um bug anterior fazia as mudanças sumirem: `addon.db`

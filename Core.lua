@@ -1198,15 +1198,18 @@ function addon:CheckIfSpellCastable(z)
 
     local Aura = z.Debuff or z.Buff or z.MyDebuff or z.MyBuff
 
-    -- Alcance: nil (desconhecido/segreto) não bloqueia — igual ao modelo clean-room (SpellInRange retorna 1 quando nil)
+    -- Alcance: nil (desconhecido/segreto) não bloqueia. A consulta de alcance
+    -- usa o nome-base para o cliente resolver o rank vigente. Um ID numérico
+    -- de rank antigo pode devolver "fora de alcance" incorretamente neste
+    -- cliente; cooldown e usabilidade continuam usando o ID resolvido.
     local rangeOk = true
     if not z.NoRangeCheck then
         local hasRange = true
         if addon.Compat and addon.Compat.SpellHasRange then
-            hasRange = addon.Compat.SpellHasRange(knownID or baseName)
+            hasRange = addon.Compat.SpellHasRange(baseName)
         end
         if hasRange then
-            local r = addon:IsSpellInRangeEx(knownID or baseName, z.Unit)
+            local r = addon:IsSpellInRangeEx(baseName, z.Unit)
             rangeOk = (r ~= false)
             if not rangeOk then return fail("fora de alcance") end
         end
