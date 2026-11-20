@@ -1,5 +1,6 @@
 -- Combat Forever Assistant — Hunter module: castable engine + aura beliefs.
 local moduleName, module = ...
+local addon = _G.CFA
 
 module.L = module.L
 local L = module.L
@@ -62,8 +63,10 @@ function module.IsOnCooldown(name, id)
     -- startTime/duration on some paths); isActive == true means on recovery.
     local start = info.startTime or info.cooldownStartTime
     local dur = info.duration or info.cooldownDuration
+    -- Guard against secret (tainted) numbers: never compare them arithmetically.
+    -- This client degrades some cooldown reads to secret values while tainted.
+    if _G.issecretvalue and (issecretvalue(start) or issecretvalue(dur)) then return true end
     if type(start) == "number" and type(dur) == "number" and start > 0 and dur > 0 then
-        if _G.issecretvalue and issecretvalue(start) then return true end
         return (GetTime() - start) < dur
     end
     if info.isActive == true then
@@ -76,22 +79,16 @@ end
 
 function module.CheckCastable(z)
     if type(z) ~= "table" then return false end
-    local name = z.SpellName
-    if type(name) ~= "string" or name == "" then return false end
-    if z.EnemyTargetNeeded and not module.UnitTargetExistsAndAttackable() then return false end
-    if z.TargetNotDead then
-        if not UnitExists("target") then return false end
-        local ok, dead = pcall(UnitIsDeadOrGhost, "target")
-        if ok and dead then return false end
-    end
-    -- known? (any rank of the family counts) — ID-first, name fallback
-    if z.SpellID and module.Compat and module.Compat.SpellKnown then
-        if not module.Compat.SpellKnown(z.SpellID) then return false end
-    elseif not module.SpellKnown(name) then
-        return false
-    end
-    if module.IsOnCooldown(name, z.SpellID) then return false end
-    return true
+    -- Usa o CheckIfSpellCastable robusto do Core (baseado no SFF), que cobre:
+    -- spell conhecido, cooldown (spellID + slot da barra como reforço), GCD,
+    -- alcance, auras (buff/debuff/myBuff/myDebuff), EnemyTargetNeeded,
+    -- TargetThatUsesManaNeeded, NotIfActive, EvenIfNotUsable.
+    z.Unit = z.Unit or "target"
+    -- ATENÇÃO: CheckIfSpellCastable é definido como método (self implícito).
+    -- Chamar com "." fazia o argumento cair em self e z chegar como nil —
+    -- isso bloqueava TODA a rotação (só os aspectos, que não usam esse gate,
+    -- apareciam). Sempre chamar com ":".
+    return addon:CheckIfSpellCastable(z)
 end
 
 -- ---------------------------------------------------------------------------
@@ -154,8 +151,10 @@ function module.OnTargetChanged()
 end
 
 function module.RegisterCast(castName)
-    local base = (type(castName) == "string") and castName:lower():gsub("%s*%b()%s*$", "") or ""
-    if base == "" then return end
+    -- Nome secreto (cliente mascara dados em combate) não pode ser comparado.
+    if type(castName) ~= "string" or castName == "" then return end
+    if _G.issecretvalue and issecretvalue(castName) then return end
+    local base = castName:lower():gsub("%s*%b()%s*$", "")
     local function strip(id)
         local n = module.SpellName(id)
         if not n then return nil end
@@ -190,6 +189,9 @@ function module.RegisterCast(castName)
             if module.charDb then
                 module.charDb.aspectBelief = { id = id, name = base, time = GetTime() }
             end
+            -- o jogador usou o aspecto: zera o contador de insistência
+            module.AspectSuggestCount = 0
+            module.AspectIgnore = {}
             return
         end
     end
@@ -223,18 +225,24 @@ local function stripAspectName(n)
     return n:lower():gsub("%s*%b()%s*$", "")
 end
 
--- Aspect semantics: out of combat the aura API is readable and wins; in combat
--- it is secret, so we fall back to the cast belief (session) and to a
--- persistent per-character belief (aspects never expire on their own).
+-- Aspect semantics (igual ao SFF — SpellFlash_Hunter/Functions.lua IsAspectIDActive):
+--  1) aura do jogador — por NOME LOCALIZADO (funciona em ptBR) e por spellID;
+--  2) BuffLib por família/aura ID;
+--  3) crença do nosso próprio cast (sessão) — auras são secret em combate;
+--  4) crença persistente por personagem (aspectos não expiram sozinhos).
+-- IMPORTANTE: a crença NUNCA é ignorada. Antes, fora de combate (API legível)
+-- o CFA descartava a crença e, como o BuffLib casa por nome em inglês, o
+-- Aspecto do Guepardo ficava "sempre inativo" -> sugeria eternamente e
+-- travava a rotação antes dela começar.
 local function aspectActive(family, id)
+    local name = module.SpellName(id)
+    local base = stripAspectName(name)
+    if module.HasBuff("player", id) then return true end
     if module.HasFamilyBuff("player", family) then return true end
-    if module.AspectAuraReadable() then return false end
     local b = module.AspectBelief
-    if b and b.active and b.name == stripAspectName(module.SpellName(id)) then
-        return true
-    end
+    if b and b.active and (b.id == id or stripAspectName(b.name) == base) then return true end
     local cb = module.charDb and module.charDb.aspectBelief
-    if cb and cb.id == id then return true end
+    if cb and (cb.id == id or stripAspectName(cb.name) == base) then return true end
     return false
 end
 
@@ -338,4 +346,21 @@ end
 function module.IsMarked(unit)
     unit = unit or "target"
     return module.HasFamilyBuff(unit, "HuntersMark") or module.HasDebuff(unit, "Hunter's Mark")
+end
+
+-- ---------------------------------------------------------------------------
+-- Revive Pet — só sugere quando o pet está morto (sem corpo ou com corpo)
+-- e nunca quando o pet está vivo ou dispensado/estábulo sem morte prévia.
+-- ---------------------------------------------------------------------------
+module.Castable = module.Castable or {}
+module.Castable["Revive Pet"] = function()
+    if UnitExists("pet") and not UnitIsDeadOrGhost("pet") then return false end
+    -- Pet inexistente e nunca detectado como morto (dispensado/estábulo): nada a reviver.
+    if not UnitExists("pet") and not module.PET_IS_DEAD then return false end
+    local z = {
+        SpellName = module.SpellName(34497),
+        SpellID = 34497,
+        EnemyTargetNeeded = false,
+    }
+    return module.CheckCastable(z)
 end

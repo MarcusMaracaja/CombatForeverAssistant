@@ -47,6 +47,65 @@ initDB()
 addon.modules = {}
 addon.activeModule = nil
 
+-- ---------------------------------------------------------------------------
+-- Modo de diagnóstico (/cfa debug on) — prints detalhados do pipeline.
+-- Desligado por padrão (zero impacto em produção).
+-- ---------------------------------------------------------------------------
+addon.debugMode = false
+
+function addon:DebugPrint(...)
+    if not self.debugMode then return end
+    local parts = {}
+    for i = 1, select("#", ...) do
+        parts[#parts + 1] = tostring((select(i, ...)))
+    end
+    print("|cff44ddff[CFA dbg]|r " .. table.concat(parts, " "))
+end
+
+-- Relatório pontual das APIs usadas pela rotação (sem depender de estado).
+function addon:DebugProbe()
+    local function P(...)
+        local parts = {}
+        for i = 1, select("#", ...) do parts[#parts + 1] = tostring((select(i, ...))) end
+        print("|cff44ddff[CFA probe]|r " .. table.concat(parts, " "))
+    end
+    local _, class = UnitClass("player")
+    local _, race = UnitRace("player")
+    P("class=", class, "race=", race, "target=", tostring(UnitExists("target")))
+    P("UnitAffectingCombat existe:", tostring(type(UnitAffectingCombat) == "function"),
+        "InCombatLockdown existe:", tostring(type(InCombatLockdown) == "function"))
+    if type(UnitAffectingCombat) == "function" then
+        local ok, v = pcall(UnitAffectingCombat, "player")
+        P("UnitAffectingCombat(player)=", tostring(v), "ok=", tostring(ok))
+    end
+    if type(InCombatLockdown) == "function" then
+        local ok, v = pcall(InCombatLockdown)
+        P("InCombatLockdown()=", tostring(v), "ok=", tostring(ok))
+    end
+    local okCA, canAttack = pcall(UnitCanAttack, "player", "target")
+    P("UnitCanAttack(player,target)=", tostring(canAttack), "ok=", tostring(okCA))
+    if type(UnitDistanceSquared) == "function" then
+        local okD, sq, checked = pcall(UnitDistanceSquared, "target")
+        P("UnitDistanceSquared=", tostring(sq), "checked=", tostring(checked), "ok=", tostring(okD))
+    end
+    P("C_Spell.IsSpellInRange existe:", tostring(C_Spell and type(C_Spell.IsSpellInRange) == "function"))
+    P("C_Spell.IsSpellUsable existe:", tostring(C_Spell and type(C_Spell.IsSpellUsable) == "function"))
+    P("C_Spell.GetSpellCooldown existe:", tostring(C_Spell and type(C_Spell.GetSpellCooldown) == "function"))
+    P("C_SpellBook.IsSpellKnownOrInSpellBook existe:",
+        tostring(C_SpellBook and type(C_SpellBook.IsSpellKnownOrInSpellBook) == "function"))
+    for _, id in ipairs({ 75, 5118, 13165, 1978, 3044, 2643, 19434 }) do
+        local name = self.Compat.SpellInfoByID(id)
+        local known = self.Compat.SpellKnown(id)
+        local cd, dur = self.Compat.SpellCooldown(id)
+        P("spell", id, "nome=", tostring(name), "known=", tostring(known),
+            "cd=", tostring(cd), "dur=", tostring(dur))
+    end
+    local aok, aura = pcall(function()
+        return C_UnitAuras and C_UnitAuras.GetAuraDataByIndex and C_UnitAuras.GetAuraDataByIndex("player", 1, "HELPFUL")
+    end)
+    P("aura#1 ok=", tostring(aok), "nome=", tostring(aura and aura.name), "spellId=", tostring(aura and aura.spellId))
+end
+
 function addon:RegisterModule(classTag, module)
     module.classTag = classTag
     self.modules[classTag] = module
@@ -71,6 +130,11 @@ local function playerCanRun()
 end
 
 frame:SetScript("OnEvent", function(_, event, arg1, ...)
+    -- caches de "spell conhecida" são invalidados quando o spellbook muda
+    if (event == "SPELLS_CHANGED" or event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_LOGIN")
+        and addon.Compat and addon.Compat.InvalidateSpellCaches then
+        addon.Compat.InvalidateSpellCaches()
+    end
     if event == "ADDON_LOADED" and arg1 == addonName then
         initDB()
     elseif event == "PLAYER_LOGIN" then
@@ -90,6 +154,10 @@ frame:SetScript("OnEvent", function(_, event, arg1, ...)
         if addon.Visuals then addon.Visuals.RefreshMap() end
     elseif event == "PLAYER_REGEN_DISABLED" then
         -- entering combat: nothing special yet
+    elseif event == "START_AUTOREPEAT_SPELL" then
+        addon.AutoShoot = true
+    elseif event == "STOP_AUTOREPEAT_SPELL" then
+        addon.AutoShoot = nil
     end
 end)
 frame:RegisterEvent("ADDON_LOADED")
@@ -99,6 +167,8 @@ frame:RegisterEvent("SPELLS_CHANGED")
 frame:RegisterEvent("UPDATE_BINDINGS")
 frame:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
 frame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+frame:RegisterEvent("START_AUTOREPEAT_SPELL")
+frame:RegisterEvent("STOP_AUTOREPEAT_SPELL")
 
 frame:SetScript("OnUpdate", function(_, delta)
     elapsed = elapsed + delta
@@ -124,6 +194,15 @@ frame:SetScript("OnUpdate", function(_, delta)
         end
     end
     local ok, suggestion = pcall(mod.GetSuggestion, mod)
+    if addon.debugMode then
+        if not ok then
+            addon:DebugPrint("ERRO em GetSuggestion:", tostring(suggestion))
+        elseif suggestion then
+            addon:DebugPrint("tick -> SUGESTÃO:", tostring(suggestion.spellID), tostring(suggestion.color))
+        else
+            addon:DebugPrint("tick -> nada sugerido")
+        end
+    end
     if not ok then
         -- Never fail silently: surface the first error and throttle repeats.
         addon.lastError = tostring(suggestion)
@@ -156,6 +235,7 @@ end)
 -- Compat layer (modern engine: globals may have moved into C_Spell / C_SpellBook)
 -- ---------------------------------------------------------------------------
 addon.Compat = {}
+addon.Compat.SpellNameToID = {}
 
 -- ---------------------------------------------------------------------------
 -- Spell rank families (data facts: rank IDs of vanilla spells).
@@ -186,17 +266,27 @@ addon.Compat.FamilyOf = familyOf
 local _knownIDCache = {}
 function addon.Compat.IsSpellKnownID(id)
     if type(id) ~= "number" then return false end
-    if _knownIDCache[id] ~= nil then return _knownIDCache[id] end
+    if _knownIDCache[id] == true then return true end
+    local function probe(fn)
+        local ok, known = pcall(fn, id)
+        if not ok then return nil end
+        if known == true then return true end
+        if known == false then return false end
+        return nil
+    end
+    local sawFalse = false
     if C_SpellBook and type(C_SpellBook.IsSpellKnownOrInSpellBook) == "function" then
-        local ok, known = pcall(C_SpellBook.IsSpellKnownOrInSpellBook, id)
-        if ok then _knownIDCache[id] = known == true and true or false return _knownIDCache[id] end
+        local r = probe(C_SpellBook.IsSpellKnownOrInSpellBook)
+        if r == true then _knownIDCache[id] = true return true end
+        if r == false then sawFalse = true end
     end
     if C_SpellBook and type(C_SpellBook.IsSpellKnown) == "function" then
-        local ok, known = pcall(C_SpellBook.IsSpellKnown, id)
-        if ok then _knownIDCache[id] = known == true and true or false return _knownIDCache[id] end
+        local r = probe(C_SpellBook.IsSpellKnown)
+        if r == true then _knownIDCache[id] = true return true end
     end
-    -- last resort: spellbook scan (only used if the direct API is missing
-    _knownIDCache[id] = true  -- be generous: don't block the rotation for lack of a probe
+    if sawFalse then return false end
+    -- Sem resposta confiável: fail-open. NUNCA cachear "false": no login o
+    -- spellbook pode ainda não estar pronto (cache envenenado = rotação morta).
     return true
 end
 
@@ -236,19 +326,162 @@ function addon.Compat.HighestKnownSpellID(id)
     return nil
 end
 
+-- Resolve qualquer rank para o rank conhecido da família (CD/alcance).
+-- Como o SFF: se a família não tiver rank conhecido, devolve o próprio ID.
+function addon.Compat.ResolveKnownID(id)
+    if type(id) ~= "number" then return id end
+    if familyOf[id] then
+        return addon.Compat.HighestKnownSpellID(id) or id
+    end
+    return id
+end
+
+-- Invalida os caches de "conhecido" (o spellbook pode carregar depois do login;
+-- um "false" cacheado deixa a rotação morta para sempre).
+function addon.Compat.InvalidateSpellCaches()
+    wipe(_knownIDCache)
+    wipe(_highestKnownCache)
+end
+
 function addon.Compat.SpellInfoByID(id)
+    -- Nunca indexar tabelas com valor secreto/nil (o cliente mascara dados).
+    local safeKey = type(id) == "number" and not (_G.issecretvalue and issecretvalue(id))
     if C_Spell and C_Spell.GetSpellInfo then
         local ok, info = pcall(C_Spell.GetSpellInfo, id)
         if ok and type(info) == "table" then
             -- `subName` carries "Rank N" on retail-style APIs when present
-            return info.name, info.subName or info.rank
+            local name = info.name
+            local rank = info.subName or info.rank
+            if type(name) == "string" and not (_G.issecretvalue and issecretvalue(name)) then
+                if safeKey then addon.Compat.SpellNameToID[name] = id end
+                return name, rank
+            end
         end
     end
     if GetSpellInfo then
         local ok, name, rank = pcall(GetSpellInfo, id)
-        if ok then return name, rank end
+        if ok and type(name) == "string" and not (_G.issecretvalue and issecretvalue(name)) then
+            if safeKey then addon.Compat.SpellNameToID[name] = id end
+            return name, rank
+        end
     end
     return nil
+end
+
+function addon.Compat.SpellName(id)
+    if type(id) ~= "number" then return id end
+    local name = addon.Compat.SpellInfoByID(id)
+    if name then return name end
+    return tostring(id)
+end
+
+function addon.Compat.SpellIDFromName(name)
+    if type(name) ~= "string" then return nil end
+    -- busca por nome no cache nome->ID (preenchido por SpellInfoByID/SpellName)
+    for id, nm in pairs(addon.Compat.SpellNameToID or {}) do
+        if type(nm) == "string" and nm:lower() == name:lower() then return id end
+    end
+    -- varredura do spellbook como fallback
+    if C_SpellBook and C_SpellBook.GetSpellBookItemInfo then
+        for i = 1, 300 do
+            local ok, info = pcall(C_SpellBook.GetSpellBookItemInfo, i, "spell")
+            if ok and info and info.name then
+                local base = info.name:gsub("%s*%b()%s*$", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                if base:lower() == name:lower() then
+                    local id = addon.Compat.HighestKnownSpellID and addon.Compat.HighestKnownSpellID(info.id) or info.id
+                    return id
+                end
+            end
+        end
+    end
+    return nil
+end
+
+-- Cooldown de um spellID pelo cliente Forever (C_Spell.GetSpellCooldown).
+-- Retorna (timeLeft, duration). Usa issecretvalue como fail-safe.
+-- CheckBuff / CheckDebuff — leitura de auras via C_UnitAuras (moderna) com
+-- fallback para UnitBuff/UnitDebuff. mine=true exige sourceUnit == "player".
+-- Em combate auras podem ser secret → retornam false (fail-safe).
+local function CheckAura(filter, defaultUnit, SpellName, unit, mine)
+    unit = unit or defaultUnit
+    if not UnitExists(unit) then return false end
+    local wanted = {}
+    local function AddWanted(w)
+        if type(w) == "number" then
+            local info = C_Spell and C_Spell.GetSpellInfo and C_Spell.GetSpellInfo(w)
+            w = info and info.name or tostring(w)
+        end
+        if type(w) == "string" and w ~= "" then wanted[#wanted + 1] = w end
+    end
+    if type(SpellName) == "table" then
+        for _, w in ipairs(SpellName) do AddWanted(w) end
+    else
+        AddWanted(SpellName)
+    end
+    if #wanted == 0 then return false end
+    local wantClean = {}
+    for _, w in ipairs(wanted) do wantClean[w:lower()] = true end
+    if C_UnitAuras and type(C_UnitAuras.GetAuraDataByIndex) == "function" then
+        for i = 1, 40 do
+            local ok, data = pcall(C_UnitAuras.GetAuraDataByIndex, unit, i, filter)
+            if not ok or not data or type(data) ~= "table" then break end
+            local name = data.name
+            if _G.issecretvalue and issecretvalue(name) then break end
+            if name and wantClean[name:lower()] then
+                if not mine then return true end
+                local source = data.sourceUnit
+                if source == nil or _G.issecretvalue and issecretvalue(source) then return false end
+                local okU, same = pcall(UnitIsUnit, source, "player")
+                if okU and same then return true end
+                local okP, sameP = pcall(UnitIsUnit, source, "pet")
+                if okP and sameP then return true end
+            end
+        end
+    elseif type(UnitBuff) == "function" or type(UnitDebuff) == "function" then
+        local iter = (filter == "HELPFUL") and UnitBuff or UnitDebuff
+        if type(iter) == "function" then
+            for i = 1, 40 do
+                local ok, n = pcall(iter, unit, i)
+                if not ok or not n then break end
+                if _G.issecretvalue and issecretvalue(n) then break end
+                if wantClean[n:lower()] then return true end
+            end
+        end
+    end
+    return false
+end
+
+function addon.Compat.CheckBuff(SpellName, unit, mine)
+    return CheckAura("HELPFUL", "player", SpellName, unit, mine)
+end
+
+function addon.Compat.CheckDebuff(SpellName, unit, mine)
+    return CheckAura("HARMFUL", "target", SpellName, unit, mine)
+end
+
+function addon.Compat.SpellCooldown(spellID)
+    if type(spellID) ~= "number" then return 0, 0 end
+    if not (C_Spell and C_Spell.GetSpellCooldown) then return 0, 0 end
+    local ok, info = pcall(C_Spell.GetSpellCooldown, spellID)
+    if not ok or type(info) ~= "table" then return 0, 0 end
+    local start = addon.SafeNumber(info.startTime, nil) or addon.SafeNumber(info.cooldownStartTime, nil) or 0
+    local duration = addon.SafeNumber(info.duration, nil) or addon.SafeNumber(info.cooldownDuration, nil) or 0
+    local isActive = info.isActive == true
+    local remaining = addon.SafeNumber(info.timeUntilEndOfStartRecovery, nil)
+    local now = addon.SafeNumber(GetTime(), 0) or 0
+    if remaining ~= nil and remaining > 0 then
+        return remaining, math.max(1.6, duration > 0 and duration or 1.6)
+    end
+    local timeLeft = start + duration - now
+    if isActive and timeLeft <= 0 then
+        timeLeft = (duration > 0 and math.max(1.6, duration)) or 5
+    end
+    if timeLeft > 0 then
+        if duration <= 1.5 then duration = 1.6 end
+        return timeLeft, duration
+    end
+    if duration > 1.5 and start == 0 then return duration, duration end
+    return 0, 0
 end
 
 function addon.Compat.SpellBookItem(i, bookType)
@@ -385,6 +618,805 @@ function addon.NodeFilterPass(env, filter)
 end
 
 -- ---------------------------------------------------------------------------
+-- Global racial system — every class module can ask "should I use my racial?"
+-- Data: raceToken -> { spellID, condition, color, classes = { ... } }
+--   condition:
+--     "always"          — sugere sempre (se souber o feitiço)
+--     "combat"          — sugere só em combate (ex: Berserking, Blood Fury)
+--     "out_of_combat"   — sugere só fora de combate (ex: Shadowmeld)
+--     "interrupt"       — sugere se o alvo está castando (ex: War Stomp)
+--     "cc_break"        — sugere em combate com inimigo (CC break: Will to Survive, Escape Artist, Will of the Forsaken)
+-- Racial NUNCA trava a rotação normal: módulos chamam como baixa prioridade
+-- (apenas dispara quando nada mais foi sugerido neste tick).
+-- IDs confirmados no WoW Forever (wowhead.com/forever, 2026-11-19).
+-- ---------------------------------------------------------------------------
+addon.RacialData = {
+    Human = {
+        spellID = 1259718, condition = "cc_break", color = "Utility",
+        classes = { WARRIOR = true, PALADIN = true, ROGUE = true, MAGE = true, WARLOCK = true, PRIEST = true, HUNTER = true },
+    }, -- Will to Survive (remove stuns)
+    Dwarf = {
+        spellID = 20594, condition = "combat", color = "Utility",
+        classes = { WARRIOR = true, PALADIN = true, HUNTER = true, ROGUE = true, MAGE = true, PRIEST = true, WARLOCK = true, SHAMAN = true },
+    }, -- Stoneform (bleed/poison/disease immunity + 10% menos dano físico)
+    NightElf = {
+        spellID = 20580, condition = "out_of_combat", color = "Utility",
+        classes = { WARRIOR = true, ROGUE = true, HUNTER = true, DRUID = true, PRIEST = true },
+    }, -- Shadowmeld (stealth parado, drop de threat)
+    Gnome = {
+        spellID = 20589, condition = "cc_break", color = "Utility",
+        classes = { WARRIOR = true, ROGUE = true, MAGE = true, WARLOCK = true, PRIEST = true },
+    }, -- Escape Artist (remove roots/snares + 3s imunidade)
+    Orc = {
+        spellID = 20572, condition = "combat", color = "Damage",
+        classes = { WARRIOR = true, HUNTER = true, ROGUE = true, MAGE = true, WARLOCK = true, SHAMAN = true },
+    }, -- Blood Fury (+10% AP/SP por 15s)
+    Scourge = {
+        spellID = 7744, condition = "cc_break", color = "Utility",
+        classes = { WARRIOR = true, ROGUE = true, MAGE = true, PRIEST = true, WARLOCK = true, PALADIN = true },
+    }, -- Will of the Forsaken (remove charm/fear/sleep) — alias de Undead
+    Undead = {
+        spellID = 7744, condition = "cc_break", color = "Utility",
+        classes = { WARRIOR = true, ROGUE = true, MAGE = true, PRIEST = true, WARLOCK = true, PALADIN = true },
+    }, -- Will of the Forsaken (remove charm/fear/sleep)
+    Tauren = {
+        spellID = 20549, condition = "interrupt", color = "Aqua",
+        classes = { WARRIOR = true, HUNTER = true, SHAMAN = true, DRUID = true },
+    }, -- War Stomp (stun 2s, até 5 inimigos a 8 yd)
+    Troll = {
+        spellID = 20554, condition = "combat", color = "Damage",
+        classes = { WARRIOR = true, HUNTER = true, ROGUE = true, MAGE = true, PRIEST = true, SHAMAN = true, WARLOCK = true },
+    }, -- Berserking (+10% cast/attack speed por 15s)
+    HighOrderSkyborne = {
+        spellID = nil, condition = "always", color = "Utility",
+        classes = { DRUID = true, HUNTER = true, MAGE = true, ROGUE = true, WARRIOR = true },
+    }, -- Sem racial ativa documentada no Forever
+    WindshaperSkyborne = {
+        spellID = 1259416, condition = "out_of_combat", color = "Utility",
+        classes = { DRUID = true, HUNTER = true, ROGUE = true, SHAMAN = true, WARRIOR = true },
+    }, -- Walk on Air (planar 10s)
+}
+-- map nomes localizados do UnitRace para o token canônico da tabela RacialData
+addon.RacialTokenAliases = {
+    ["scourge"] = "Scourge",
+    ["undead"]  = "Undead",
+    ["morto-vivo"] = "Scourge",
+    ["mortovivo"] = "Scourge",
+    ["humano"] = "Human",
+    ["anão"] = "Dwarf", ["anao"] = "Dwarf",
+    ["elfo noturno"] = "NightElf",
+    ["gnomo"] = "Gnome",
+    ["orc"] = "Orc",
+    ["tauren"] = "Tauren",
+    ["troll"] = "Troll",
+    ["high order skyborne"] = "HighOrderSkyborne",
+    ["windshaper skyborne"] = "WindshaperSkyborne",
+}
+
+-- Retorna o spellID da racial da raça (ou nil se não houver racial ativa).
+function addon:GetRacialSpellID(raceToken)
+    if type(raceToken) ~= "string" then return nil end
+    local data = self.RacialData[raceToken]
+    if not data then return nil end
+    return data.spellID
+end
+
+-- Retorna true se a racial desta raça deve ser sugerida agora, dadas as condições.
+-- `env` é a tabela de contexto da rotação (pode ser nil -> condição não depende dela).
+function addon:ShouldUseRacial(raceToken, env)
+    if type(raceToken) ~= "string" then return false end
+    local data = self.RacialData[raceToken]
+    if not data then return false end
+    -- se a raça não tem racial ativa (spellID nil), nunca sugere
+    if not data.spellID then return false end
+    local cond = data.condition or "always"
+    if cond == "always" then return true end
+    if cond == "combat" then
+        return env and env.inCombat == true or false
+    end
+    if cond == "out_of_combat" then
+        return env and env.inCombat ~= true or false
+    end
+    if cond == "interrupt" then
+        return env and env.targetCasting == true or false
+    end
+    if cond == "cc_break" then
+        -- só faz sentido em combate com inimigo presente (o player decide se está CC'd)
+        return env and env.inCombat == true and env.hasActiveEnemy == true or false
+    end
+    return false
+end
+
+-- Tenta sugerir a racial do player como baixa prioridade (não bloqueante).
+-- Retorna true se uma sugestão de racial foi definida; false caso contrário.
+-- Chamar DEPOIS da rotação normal para nunca bloquear dano/utilidade.
+function addon:SuggestRacial(module, env)
+    local _, raceToken = UnitRace("player")
+    if not raceToken then return false end
+    -- resolve aliases localizados para o token canônico
+    local lower = raceToken:lower()
+    raceToken = self.RacialTokenAliases[lower] or raceToken
+    if not self:ShouldUseRacial(raceToken, env) then return false end
+    local spellID = self:GetRacialSpellID(raceToken)
+    if not spellID then return false end
+    local color = self.RacialData[raceToken].color or "Utility"
+    local knownID = self.Compat and self.Compat.HighestKnownSpellID and self.Compat.HighestKnownSpellID(spellID) or spellID
+    if module.TickFlashUsed then return false end
+    -- verifica castabilidade antes de sugerir (raciais são self-target)
+    local spellName = module.SpellName and module.SpellName(knownID)
+    if not spellName then return false end
+    local z = {
+        SpellName = spellName,
+        SpellID = knownID,
+        EnemyTargetNeeded = false,
+    }
+    -- module.CheckCastable é função com ponto (sem self implícito): chamar com "."
+    if module.CheckCastable and not module.CheckCastable(z) then return false end
+    return module:Suggest(knownID, color)
+end
+
+-- ---------------------------------------------------------------------------
+-- FindActionSlot — busca por slot na barra de ação de uma spell (por ID ou
+-- nome-base). Baseado no SFF (SpellFlashForever.lua). Com cache, suporte a
+-- macros, ataque automático e match por nome-base (insensível a rank/locale).
+-- ---------------------------------------------------------------------------
+local ACTION_SLOT_CACHE = {}
+local ACTION_SLOT_CACHE_FRAME = CreateFrame("Frame")
+ACTION_SLOT_CACHE_FRAME:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
+ACTION_SLOT_CACHE_FRAME:RegisterEvent("ACTIONBAR_PAGE_CHANGED")
+ACTION_SLOT_CACHE_FRAME:RegisterEvent("UPDATE_BONUS_ACTIONBAR")
+ACTION_SLOT_CACHE_FRAME:RegisterEvent("PLAYER_ENTERING_WORLD")
+ACTION_SLOT_CACHE_FRAME:SetScript("OnEvent", function() wipe(ACTION_SLOT_CACHE) end)
+
+local BAR_NAMES = {
+    "ActionButton", "MultiBarBottomLeftButton", "MultiBarBottomRightButton",
+    "MultiBarRightButton", "MultiBarLeftButton", "MultiBar5Button",
+    "MultiBar6Button", "MultiBar7Button",
+}
+
+local function stripRank(name)
+    if type(name) ~= "string" then return "" end
+    return (name:gsub("%s*%b()%s*$", "")):gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+local function normalizeName(name)
+    return stripRank(name):lower()
+end
+
+local function toActionID(id)
+    if type(id) == "number" then return id end
+    if type(id) == "string" then return tonumber(id) end
+    return nil
+end
+
+local function spellNameFromID(id)
+    if type(id) ~= "number" then return nil end
+    if addon.Compat and addon.Compat.SpellInfoByID then
+        local ok, info = pcall(addon.Compat.SpellInfoByID, id)
+        if ok and info and type(info) == "string" then return info end
+        if ok and type(info) == "table" and info.name then return info.name end
+    end
+    if type(GetSpellInfo) == "function" then
+        local ok, name = pcall(GetSpellInfo, id)
+        if ok and name then return name end
+    end
+    return nil
+end
+
+local function findAttackActionSlot()
+    if C_ActionBar and type(C_ActionBar.IsAttackAction) == "function" then
+        for i = 1, 180 do
+            local ok, isAttack = pcall(C_ActionBar.IsAttackAction, i)
+            if ok and isAttack == true then return i end
+        end
+    end
+    if type(GetActionInfo) == "function" then
+        for i = 1, 180 do
+            local ok, actionType = pcall(GetActionInfo, i)
+            if ok and actionType == "attack" then return i end
+        end
+    end
+    return nil
+end
+
+local function findActionButtonByID(spellID)
+    if not spellID or type(spellID) ~= "number" then return nil end
+    -- Ataque automático (6603): ação especial, não é slot "spell" comum.
+    if spellID == 6603 then
+        local attackSlot = findAttackActionSlot()
+        if attackSlot then return attackSlot end
+    end
+    local targetName = normalizeName(spellNameFromID(spellID))
+    -- 1) ID exato
+    for i = 1, 180 do
+        local ok, actionType, id = pcall(GetActionInfo, i)
+        if ok and actionType == "spell" and toActionID(id) == spellID then return i end
+    end
+    -- 2) Nome-base normalizado (outro rank da mesma spell)
+    if targetName ~= "" then
+        for i = 1, 180 do
+            local ok, actionType, id = pcall(GetActionInfo, i)
+            if ok and actionType == "spell" then
+                local name = spellNameFromID(toActionID(id) or id)
+                if normalizeName(name) == targetName then return i end
+            end
+        end
+    end
+    -- 3) Macros
+    for i = 1, 180 do
+        local ok, actionType, id = pcall(GetActionInfo, i)
+        if ok and actionType == "macro" then
+            local macroIndex = toActionID(id)
+            local macroName = GetActionText and GetActionText(i)
+            if targetName ~= "" and type(macroName) == "string"
+                and normalizeName(macroName) == targetName then return i end
+            if macroIndex then
+                local ok2, spellName2 = pcall(function()
+                    if C_Spell and C_Spell.GetSpellInfo then
+                        local o, info = pcall(C_Spell.GetSpellInfo, macroIndex)
+                        return o and info and info.name or nil
+                    end
+                end)
+                if ok2 and spellName2 and normalizeName(spellName2) == targetName then return i end
+            end
+        end
+    end
+    return nil
+end
+
+function addon:FindActionSlot(spellID)
+    if type(spellID) ~= "number" then return nil end
+    local cached = ACTION_SLOT_CACHE[spellID]
+    if cached ~= nil then return cached or nil end
+    local slot = findActionButtonByID(spellID)
+    ACTION_SLOT_CACHE[spellID] = slot or false
+    return slot
+end
+
+-- ---------------------------------------------------------------------------
+-- ActionCooldown — cooldown pelo slot da barra de ação (resposta do cliente).
+-- Robusto: independe de rank/nome; usa C_ActionBar.GetActionCooldown.
+-- ---------------------------------------------------------------------------
+function addon:ActionCooldown(slot)
+    if not slot then return 0, 0 end
+    if C_ActionBar and type(C_ActionBar.GetActionCooldown) == "function" then
+        local ok, info = pcall(C_ActionBar.GetActionCooldown, slot)
+        if ok and type(info) == "table" then
+            local start = addon.SafeNumber(function() return info.startTime end, nil)
+                or addon.SafeNumber(function() return info.cooldownStartTime end, nil) or 0
+            local duration = addon.SafeNumber(function() return info.duration end, nil)
+                or addon.SafeNumber(function() return info.cooldownDuration end, nil) or 0
+            local isActive = info.isActive == true
+            local remaining = addon.SafeNumber(function() return info.timeUntilEndOfStartRecovery end, nil)
+            if remaining ~= nil and remaining > 0 then
+                return remaining, math.max(1.6, duration > 0 and duration or 1.6)
+            end
+            local now = addon.SafeNumber(function() return GetTime() end, 0) or 0
+            local timeLeft = start + duration - now
+            if isActive and timeLeft <= 0 then
+                timeLeft = (duration > 0 and math.max(1.6, duration)) or 5
+            end
+            if timeLeft > 0 then
+                if duration <= 1.5 then duration = 1.6 end
+                return timeLeft, duration
+            end
+            if duration > 1.5 and start == 0 then return duration, duration end
+            return 0, 0
+        end
+    end
+    return 0, 0
+end
+
+-- ---------------------------------------------------------------------------
+-- IsSpellInRangeEx — alcance estrito (true/false/nil). Nil = desconhecido,
+-- nunca interpretado como "em alcance" (evita o bug de todo alvo parecer
+-- melee quando a API é secreta).
+-- ---------------------------------------------------------------------------
+function addon:IsSpellInRangeEx(spellName, unit)
+    unit = unit or "target"
+    local spellID
+    if type(spellName) == "number" then
+        spellID = spellName
+    else
+        spellID = addon.SafeNumber(function() return addon.Compat.SpellIDFromName and addon.Compat.SpellIDFromName(spellName) end, nil)
+    end
+    local base = stripRank(tostring(spellName))
+
+    local function byID(id)
+        if not id or not C_Spell or type(C_Spell.IsSpellInRange) ~= "function" then return nil end
+        local ok, result = pcall(C_Spell.IsSpellInRange, id, unit)
+        if not ok then return nil end
+        if _G.issecretvalue and issecretvalue(result) then return nil end
+        if result == true or result == 1 then return true end
+        if result == false or result == 0 then return false end
+        return nil
+    end
+
+    local function byName(name)
+        if type(name) ~= "string" or name == "" then return nil end
+        if not C_Spell or type(C_Spell.IsSpellInRange) ~= "function" then return nil end
+        local ok, result = pcall(C_Spell.IsSpellInRange, name, unit)
+        if not ok then return nil end
+        if _G.issecretvalue and issecretvalue(result) then return nil end
+        if result == true or result == 1 then return true end
+        if result == false or result == 0 then return false end
+        return nil
+    end
+
+    local answer
+    if spellID then
+        answer = byID(spellID)
+        if answer == nil then answer = byName(base) end
+    else
+        answer = byName(base)
+    end
+    if answer ~= nil then return answer end
+
+    -- API global legada (1/0/nil)
+    if type(IsSpellInRange) == "function" and base and base ~= "" then
+        local ok, result = pcall(IsSpellInRange, base, unit)
+        if ok then
+            if _G.issecretvalue and issecretvalue(result) then return nil end
+            if result == true or result == 1 then return true end
+            if result == false or result == 0 then return false end
+        end
+    end
+    return nil
+end
+
+-- ---------------------------------------------------------------------------
+-- ActionSlotRange / TargetDistance / IsInMeleeRange — portados do SFF
+-- (SharedFunctions.lua). Sem chute: nil = desconhecido.
+-- ---------------------------------------------------------------------------
+function addon:ActionSlotRange(slot, unit)
+    if not slot then return nil end
+    local fn = (C_ActionBar and C_ActionBar.IsActionInRange) or _G.IsActionInRange
+    if type(fn) ~= "function" then return nil end
+    local function answer(v)
+        if v == nil then return nil end
+        if _G.issecretvalue and issecretvalue(v) then return nil end
+        if v == true or v == 1 then return true end
+        if v == false or v == 0 then return false end
+        return nil
+    end
+    local ok, result = pcall(fn, slot, unit or "target")
+    if ok then
+        local a = answer(result)
+        if a ~= nil then return a end
+    end
+    ok, result = pcall(fn, slot)
+    if ok then return answer(result) end
+    return nil
+end
+
+function addon:TargetDistance(unit)
+    unit = unit or "target"
+    if type(UnitDistanceSquared) ~= "function" then return nil end
+    if not UnitExists(unit) then return nil end
+    local ok, squared, checked = pcall(UnitDistanceSquared, unit)
+    if not ok or checked ~= true then return nil end
+    if type(squared) ~= "number" then return nil end
+    if _G.issecretvalue and issecretvalue(squared) then return nil end
+    if squared < 0 then return nil end
+    return math.sqrt(squared)
+end
+
+-- true = melee, false = ranged, nil = desconhecido
+function addon:IsInMeleeRange(unit)
+    unit = unit or "target"
+    if not UnitExists(unit) then return nil end
+    local attackSlot = self:FindActionSlot(6603)
+    local attackRange = self:ActionSlotRange(attackSlot, unit)
+    if attackRange ~= nil then return attackRange end
+    local known = (self.Compat and self.Compat.HighestKnownSpellID and self.Compat.HighestKnownSpellID(2974)) or 2974
+    local r = self:IsSpellInRangeEx(known, unit)
+    if r == true then return true end
+    local autoSlot = self:FindActionSlot(75)
+    local autoRange = self:ActionSlotRange(autoSlot, unit)
+    if autoRange == true then return false end
+    if autoRange == false then return true end
+    if not (type(InCombatLockdown) == "function" and InCombatLockdown())
+        and type(CheckInteractDistance) == "function" then
+        local ok, can = pcall(CheckInteractDistance, unit, 3)
+        if ok and not (_G.issecretvalue and issecretvalue(can)) then
+            return can and true or false
+        end
+    end
+    return nil
+end
+
+-- ---------------------------------------------------------------------------
+-- Zona morta do Hunter (5-10 yd): o corpo a corpo (5 yd) não alcança e as
+-- habilidades de longo alcance não funcionam — é o caso do Disengage.
+--   true  = zona morta
+--   false = fora da zona morta
+--   nil   = desconhecido (sem leitura de distância/alcance)
+-- Sem distância medida: usa a sondagem do slot "Atacar" (≤5 yd) contra a
+-- sondagem do Corte de Asa (≤10 yd): ataque fora + corte dentro = zona morta.
+-- ---------------------------------------------------------------------------
+function addon:IsInDeadZoneRange(unit)
+    unit = unit or "target"
+    if not UnitExists(unit) then return nil end
+    local dist = self:TargetDistance(unit)
+    if dist then return (dist > 5 and dist <= 10) and true or false end
+    local attackSlot = self:FindActionSlot(6603)
+    local attackRange = self:ActionSlotRange(attackSlot, unit)
+    if attackRange == true then return false end
+    local known = (self.Compat and self.Compat.HighestKnownSpellID and self.Compat.HighestKnownSpellID(2974)) or 2974
+    local r = self:IsSpellInRangeEx(known, unit)
+    if r == true then return true end
+    if attackRange == false then return false end
+    return nil
+end
+
+-- ---------------------------------------------------------------------------
+-- Flashable — spell conhecida e utilizável (o "piscar" ainda passa por
+-- CheckIfSpellCastable no próprio módulo).
+-- ---------------------------------------------------------------------------
+function addon:Flashable(spellName)
+    if not spellName then return false end
+    local known
+    if type(spellName) == "number" then
+        known = addon.Compat and addon.Compat.SpellKnown and addon.Compat.SpellKnown(spellName)
+    else
+        known = addon.Compat and addon.Compat.SpellKnown and addon.Compat.SpellKnown(spellName)
+    end
+    if known == false then return false end
+    return true
+end
+
+-- ---------------------------------------------------------------------------
+-- CheckIfSpellCastable — coração do sistema de castabilidade (portado do SFF).
+-- Verifica: spell conhecido, cooldown (spellID + slot da barra como reforço),
+-- GCD, alcance, auras (buff/debuff/myBuff/myDebuff), EnemyTargetNeeded,
+-- TargetThatUsesManaNeeded, NotIfActive, EvenIfNotUsable.
+-- ---------------------------------------------------------------------------
+local GLOBAL_COOLDOWN_SPELL = ({
+    DEATHKNIGHT = 45902, DRUID = 5176, HUNTER = 3044, MAGE = 133, PALADIN = 635,
+    PRIEST = 585, ROGUE = 1752, SHAMAN = 403, WARLOCK = 686, WARRIOR = 772,
+})[select(2, UnitClass("player")) or ""] or 2973
+
+function addon:CheckIfSpellCastable(z)
+    if type(z) ~= "table" then return false end
+
+    -- z.Debug = tabela: recebe o motivo da recusa (usado pelo /cfa debug).
+    local dbg = z.Debug
+    local function fail(reason)
+        if type(dbg) == "table" then dbg.reason = reason end
+        if addon.debugMode then
+            addon:DebugPrint("castable: RECUSADO", tostring(z.SpellName), tostring(z.SpellID), "-", tostring(reason))
+        end
+        return false
+    end
+
+    local spellID = z.SpellID
+    local spellName = z.SpellName
+    if type(spellID) == "number" then
+        spellName = spellName or spellNameFromID(spellID)
+    elseif type(spellName) == "number" then
+        spellID = spellName
+        spellName = spellNameFromID(spellID)
+    end
+    if not spellName or spellName == "" then return fail("sem nome de spell") end
+
+    local baseName = stripRank(spellName)
+
+    -- "Conhecida": o SFF NÃO bloqueia a rotação por ID (o ID do nó pode ser um
+    -- rank que o jogador não tem mais no livro). Aqui: só bloqueia se o ID e o
+    -- NOME forem simultaneamente desconhecidos (fail-open, igual ao SFF).
+    if spellID then
+        local known = addon.Compat and addon.Compat.SpellKnown and addon.Compat.SpellKnown(spellID)
+        if known == false then
+            local byName = addon.Compat and addon.Compat.HasSpell and addon.Compat.HasSpell(spellName)
+            if not byName then return fail("spell desconhecida (id=" .. tostring(spellID) .. ")") end
+        end
+    else
+        local has = addon.Compat and addon.Compat.HasSpell and addon.Compat.HasSpell(spellName)
+        if not has then return fail("spell desconhecida (" .. tostring(spellName) .. ")") end
+    end
+
+    z.Unit = z.Unit or "target"
+
+    if z.EnemyTargetNeeded then
+        local enemy = addon.Enemy and addon:Enemy(z.Unit)
+        if enemy == false then return fail("sem alvo inimigo") end
+    end
+
+    local lag = 0
+    if type(GetNetStats) == "function" then
+        local ok, _, _, latency = pcall(GetNetStats)
+        if ok and type(latency) == "number" then lag = latency / 1000 end
+    end
+
+    local castingTimeLeft = 0
+    if addon.Compat and addon.Compat.GetCasting then
+        local ct = addon.Compat.GetCasting(nil, "player")
+        if ct and ct > 0 then castingTimeLeft = ct end
+    end
+
+    local isUsable, notEnoughPower = true, false
+    if addon.Compat and addon.Compat.UsableSpell then
+        isUsable, notEnoughPower = addon.Compat.UsableSpell(baseName)
+    elseif type(IsUsableSpell) == "function" then
+        local ok, a, b = pcall(IsUsableSpell, spellName)
+        if ok then isUsable = not not a; notEnoughPower = not not b end
+    end
+
+    local cooldown = 0
+    local duration = 0
+    local knownID = addon.Compat and addon.Compat.ResolveKnownID and addon.Compat.ResolveKnownID(spellID) or spellID
+    local cdID = knownID or spellID
+    if addon.Compat and addon.Compat.SpellCooldown and cdID then
+        local cd, dur = addon.Compat.SpellCooldown(cdID)
+        cooldown = cd or 0
+        duration = dur or 0
+    end
+    local actionSlot = nil
+    if knownID and addon.FindActionSlot then
+        actionSlot = addon:FindActionSlot(knownID)
+    end
+    if actionSlot and addon.ActionCooldown then
+        local sc, sd = addon:ActionCooldown(actionSlot)
+        if sc and sc > (cooldown or 0) then
+            cooldown, duration = sc, sd or duration
+        end
+    end
+    local globalcooldown = 0
+    if GLOBAL_COOLDOWN_SPELL and addon.Compat and addon.Compat.SpellCooldown then
+        local gcd = addon.Compat.SpellCooldown(GLOBAL_COOLDOWN_SPELL)
+        globalcooldown = gcd or 0
+    end
+
+    local Aura = z.Debuff or z.Buff or z.MyDebuff or z.MyBuff
+
+    -- Alcance: nil (desconhecido/segreto) não bloqueia — igual ao SFF (SpellInRange retorna 1 quando nil)
+    local rangeOk = true
+    if not z.NoRangeCheck then
+        local hasRange = true
+        if addon.Compat and addon.Compat.SpellHasRange then
+            hasRange = addon.Compat.SpellHasRange(baseName)
+        end
+        if hasRange then
+            local r = addon:IsSpellInRangeEx(baseName, z.Unit)
+            rangeOk = (r ~= false)
+            if not rangeOk then return fail("fora de alcance") end
+        end
+    end
+
+    local cooldownOk = (cooldown <= lag + castingTimeLeft)
+        or (globalcooldown == 0 and duration <= 1.5)
+        or (globalcooldown > 0 and cooldown <= globalcooldown)
+    if not cooldownOk then
+        return fail(string.format("em cooldown (%.1fs de %.1fs, gcd=%.1fs)",
+            tonumber(cooldown) or 0, tonumber(duration) or 0, tonumber(globalcooldown) or 0))
+    end
+
+    local notIfActiveOk = true
+    if not z.NotIfActive and not Aura then
+        -- sem NotIfActive e sem aura: passa
+    else
+        local current = false
+        if addon.Compat and addon.Compat.IsCurrentSpell then
+            current = addon.Compat.IsCurrentSpell(baseName)
+        elseif type(IsCurrentSpell) == "function" then
+            local ok, c = pcall(IsCurrentSpell, spellName)
+            if ok then current = not not c end
+        end
+        local casting = false
+        if addon.Compat and addon.Compat.CastingOrChanneling then
+            casting = addon.Compat.CastingOrChanneling(baseName, "player")
+        end
+        if not z.NotIfActive and not Aura then
+            notIfActiveOk = true
+        else
+            notIfActiveOk = (not current and not casting) or (not Aura and (casting or 0) <= lag)
+        end
+    end
+
+    local enemyOk = true
+    if z.EnemyTargetNeeded then
+        local e = addon.Enemy and addon:Enemy(z.Unit)
+        enemyOk = (e ~= false)
+    end
+
+    local manaTargetOk = true
+    if z.TargetThatUsesManaNeeded then
+        if type(UnitPowerType) == "function" then
+            local okPT, pType = pcall(UnitPowerType, z.Unit)
+            manaTargetOk = (okPT and pType == 0) or false
+        else
+            manaTargetOk = true
+        end
+    end
+
+    local debuffSlotOk = true
+    if z.DebuffSlotNeeded then
+        debuffSlotOk = true -- nunca bloqueia por "slots de debuff cheios"
+    end
+
+    local debuffOk = true
+    if z.Debuff then
+        local check = addon.Compat and addon.Compat.CheckDebuff
+        if check then
+            local buffUnit = z.BuffUnit or z.Unit or "target"
+            local mine = (z.MyDebuff == z.Debuff) and true or nil
+            local okD, up = pcall(check, z.Debuff, buffUnit, mine)
+            debuffOk = (okD and up == true) or false
+        end
+    end
+
+    local buffOk = true
+    if z.Buff then
+        local check = addon.Compat and addon.Compat.CheckBuff
+        if check then
+            local buffUnit = z.BuffUnit or z.Unit or "target"
+            local mine = (z.MyBuff == z.Buff) and true or nil
+            local okB, up = pcall(check, z.Buff, buffUnit, mine)
+            buffOk = (okB and up == true) or false
+        end
+    end
+
+    local myDebuffOk = true
+    if z.MyDebuff then
+        local check = addon.Compat and addon.Compat.CheckDebuff
+        if check then
+            local buffUnit = z.BuffUnit or z.Unit or "target"
+            local okD, up = pcall(check, z.MyDebuff, buffUnit, true)
+            myDebuffOk = (okD and up == true) or false
+        end
+    end
+
+    local myBuffOk = true
+    if z.MyBuff then
+        local check = addon.Compat and addon.Compat.CheckBuff
+        if check then
+            local buffUnit = z.BuffUnit or z.Unit or "target"
+            local okB, up = pcall(check, z.MyBuff, buffUnit, true)
+            myBuffOk = (okB and up == true) or false
+        end
+    end
+
+    if not (z.EvenIfNotUsable or isUsable) then return fail("spell não utilizável agora") end
+    if notEnoughPower then return fail("sem mana/poder") end
+    if not notIfActiveOk then return fail("já está conjurando/canalizando") end
+    if not enemyOk then return fail("alvo não é inimigo") end
+    if not manaTargetOk then return fail("alvo não usa mana") end
+    if not debuffSlotOk then return fail("sem espaço de debuff") end
+    if not debuffOk then return fail("debuff já aplicado") end
+    if not buffOk then return fail("buff já ativo") end
+    if not myDebuffOk then return fail("meu debuff já aplicado") end
+    if not myBuffOk then return fail("meu buff já ativo") end
+
+    if addon.debugMode then
+        addon:DebugPrint("castable: OK", tostring(spellName), tostring(spellID))
+    end
+    return true
+end
+
+-- ---------------------------------------------------------------------------
+-- Enemy wrapper (fail-open): se a leitura de UnitCanAttack for secreta/ilegível,
+-- trata como atacável para não travar a rotação.
+-- ---------------------------------------------------------------------------
+function addon:Enemy(unit)
+    unit = unit or "target"
+    local okE, exists = pcall(UnitExists, unit)
+    if not okE or not exists then return false end
+    local ok, canAttack = pcall(UnitCanAttack, "player", unit)
+    if not ok or (_G.issecretvalue and issecretvalue(canAttack)) then canAttack = true end
+    if not canAttack then return false end
+    local ok2, dead = pcall(UnitIsDeadOrGhost, unit)
+    if ok2 and dead then return false end
+    return true
+end
+
+-- ---------------------------------------------------------------------------
+-- SafeNumber — leitura segura de números secretos (taint do cliente Forever).
+-- ---------------------------------------------------------------------------
+function addon.SafeNumber(v, fallback)
+    if type(v) ~= "number" then return fallback end
+    if _G.issecretvalue and issecretvalue(v) then return fallback end
+    return v
+end
+
+-- ---------------------------------------------------------------------------
+-- Compat: funções de suporte que o CheckIfSpellCastable precisa e que o SFF
+-- expõe em SpellFlashAddon. Todas usam pcall + issecretvalue como fail-safe.
+-- ---------------------------------------------------------------------------
+function addon.Compat.HasSpell(spellName)
+    local name = addon.Compat.SpellName and addon.Compat.SpellName(spellName) or spellName
+    if type(name) ~= "string" or name == "" then return false end
+    local spellID = addon.Compat.SpellIDFromName and addon.Compat.SpellIDFromName(name)
+    if spellID then
+        local known = addon.Compat.SpellKnown and addon.Compat.SpellKnown(spellID)
+        if known == true then return true end
+    end
+    if C_Spell and C_Spell.GetSpellInfo then
+        local ok, info = pcall(C_Spell.GetSpellInfo, spellName)
+        if ok and info ~= nil then return true end
+    end
+    if type(GetSpellInfo) == "function" then
+        local ok, result = pcall(GetSpellInfo, name)
+        if ok and result ~= nil then return true end
+    end
+    return true -- fail-open: deixar recomendar (cliente-friendly)
+end
+
+function addon.Compat.UsableSpell(spellName)
+    local id = type(spellName) == "number" and spellName
+        or (addon.Compat.SpellIDFromName and addon.Compat.SpellIDFromName(spellName)) or nil
+    if id and C_Spell and type(C_Spell.IsSpellUsable) == "function" then
+        local ok, isUsable, notEnoughPower = pcall(C_Spell.IsSpellUsable, id)
+        if ok then
+            if isUsable == true then return true, false end
+            if notEnoughPower == true then return false, true end
+            -- isUsable == false sem "sem mana" pode ser rank/ID inválido:
+            -- não bloqueia (fail-open), tenta o nome abaixo.
+        end
+    end
+    if type(IsUsableSpell) == "function" then
+        local ok, a, b = pcall(IsUsableSpell, spellName)
+        if ok and a ~= nil then return a and true or false, not not b end
+    end
+    return true, false
+end
+
+function addon.Compat.IsCurrentSpell(spellName)
+    local name = addon.Compat.SpellName and addon.Compat.SpellName(spellName) or spellName
+    if not name then return false end
+    if type(IsCurrentSpell) == "function" then
+        local ok, c = pcall(IsCurrentSpell, name)
+        if ok then return not not c end
+    end
+    return false
+end
+
+function addon.Compat.GetCasting(spellName, unit)
+    unit = unit or "player"
+    if type(UnitCastingInfo) == "function" then
+        local ok, _, _, _, _, startMS, endMS = pcall(UnitCastingInfo, unit)
+        if ok and endMS and startMS then
+            local remaining = (endMS - (GetTime and GetTime() * 1000 or 0)) / 1000
+            if remaining > 0 then return remaining end
+            return 0
+        end
+    end
+    return nil
+end
+
+function addon.Compat.CastingOrChanneling(spellName, unit)
+    unit = unit or "player"
+    local name = addon.Compat.SpellName and addon.Compat.SpellName(spellName) or spellName
+    local remaining = nil
+    if type(UnitCastingInfo) == "function" then
+        local okCast, _, _, _, _, startMS, endMS = pcall(UnitCastingInfo, unit)
+        if okCast and endMS and startMS then
+            remaining = (endMS - (GetTime and GetTime() * 1000 or 0)) / 1000
+            if remaining > 0 then return remaining end
+        end
+    end
+    if type(UnitChannelInfo) == "function" then
+        local okChan, _, _, _, _, endMS = pcall(UnitChannelInfo, unit)
+        if okChan and endMS then
+            remaining = (endMS - (GetTime and GetTime() * 1000 or 0)) / 1000
+            if remaining > 0 then return remaining end
+        end
+    end
+    return nil
+end
+
+function addon.Compat.SpellHasRange(spellName)
+    local id = type(spellName) == "number" and spellName or addon.Compat.SpellIDFromName and addon.Compat.SpellIDFromName(spellName)
+    if not id then
+        if type(spellName) == "string" and spellName:match("^%d+$") then return false end
+        return true -- desconhecido: assume que tem alcance
+    end
+    if not C_Spell or type(C_Spell.GetSpellInfo) ~= "function" then return true end
+    local ok, info = pcall(C_Spell.GetSpellInfo, id)
+    if not ok or not info then return true end
+    return (info.maxRange or 0) > 0
+end
+
+-- ---------------------------------------------------------------------------
 -- Declarative rotation engine (used by class modules)
 -- ---------------------------------------------------------------------------
 function addon:ConcatCommonNodes(common, nodes)
@@ -419,9 +1451,16 @@ function addon:RunDeclaredRotation(module, specKey, env)
                         pass = true
                     end
                 end
+                if addon.debugMode then
+                    addon:DebugPrint("nó", tostring(node.id), "cond=" .. tostring(cond),
+                        "condOK=" .. tostring(pass), "enabled=ok")
+                end
                 if pass then
                     local knownID = addon.Compat.HighestKnownSpellID(node.spellID) or node.spellID
                     if module:TryFlash(knownID, node.color, function() return true end, node.name, env) then
+                        if addon.debugMode then
+                            addon:DebugPrint("   -> SUGERIDO", tostring(node.id), tostring(knownID))
+                        end
                         if not node.passthrough then return true end
                     end
                 end
@@ -540,6 +1579,17 @@ SlashCmdList["COMBATFOREVERASSISTANT"] = function(msg)
         if addon.lastError then
             print(string.format(L["rotation_error"], addon.lastError))
         end
+    elseif msg == "debug" or msg == "debug on" then
+        addon.debugMode = (msg == "debug on") and true or not addon.debugMode
+        print("|cff44ddff[CFA]|r modo debug: " .. (addon.debugMode and "LIGADO" or "DESLIGADO"))
+        if addon.debugMode and addon.activeModule and addon.activeModule.DebugRotation then
+            addon.activeModule.DebugRotation()
+        end
+    elseif msg == "debug off" then
+        addon.debugMode = false
+        print("|cff44ddff[CFA]|r modo debug: DESLIGADO")
+    elseif msg == "probe" then
+        addon:DebugProbe()
     elseif msg == "key" then
         addon.db.keyButton = not addon.db.keyButton
         print(addon.db.keyButton and L["key_button_shown"] or L["key_button_hidden"])

@@ -3,6 +3,7 @@
 -- the module with the core. The core pipeline (OnUpdate -> GetSuggestion)
 -- takes it from here and flashes the button.
 local moduleName, module = ...
+local addon = _G.CFA
 
 local L = module.L
 
@@ -55,9 +56,12 @@ trackerFrame:SetScript("OnEvent", function(_, event, ...)
         end
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         local _, _, spellID = ...
-        if type(spellID) == "number" and module.Compat and module.Compat.SpellInfoByID then
+        if type(spellID) == "number" and not (_G.issecretvalue and issecretvalue(spellID))
+            and module.Compat and module.Compat.SpellInfoByID then
             local name = module.Compat.SpellInfoByID(spellID)
-            module.RegisterCast(name)
+            if type(name) == "string" and not (_G.issecretvalue and issecretvalue(name)) then
+                pcall(module.RegisterCast, name)
+            end
         end
     end
 end)
@@ -229,39 +233,54 @@ function module:BuildEnv()
     env.isPvP = module.IsPvPTarget()
     env.isMelee = false
     env.tooCloseForRanged = false
+    env.isDeadZone = false
     env.targetDistance = nil
-    if type(UnitDistanceSquared) == "function" and UnitExists("target") then
-        -- Only trust the reading when the client says it verified it
-        local ok, sq, checked = pcall(UnitDistanceSquared, "target")
-        sq = module.SafeNumber(sq, nil)
-        if ok and sq and checked == true then
-            env.targetDistance = math.sqrt(sq)
-            env.isMelee = env.targetDistance <= 10
-            env.tooCloseForRanged = env.isMelee
-        end
-    end
-    if env.targetDistance == nil and UnitExists("target") then
-        -- Fallback chain: Attack slot -> Wing Clip probe -> Auto Shot probe
-        local attackInRange = attackSlotInRange()
-        local wingProbe = spellProbe(2974)
-        local autoProbe = spellProbe(75)
-        if attackInRange == true or wingProbe == true then
-            env.targetDistance = 5
-            env.isMelee = true
-            env.tooCloseForRanged = true
-        elseif autoProbe == true then
-            env.targetDistance = 35
-            env.isMelee = false
-            env.tooCloseForRanged = false
+    -- Distância: UnitDistanceSquared (medida) -> sondagem de slot (SFF) -> chute seguro.
+    --
+    -- Zona morta do Hunter (WotLK): corpo a corpo precisa de 5 yd e as
+    -- habilidades de longo alcance não funcionam entre 5 e 10 yd.
+    --   - isMelee           = dentro do alcance corpo a corpo (<= 5 yd)
+    --   - tooCloseForRanged = alcance longo inviável (<= 10 yd)
+    --   - isDeadZone        = 5 < distancia <= 10 (é o caso do Disengage)
+    -- Antes, isMelee e tooCloseForRanged eram sempre iguais (dist <= 10), o que
+    -- tornava a condição "dead_zone_not_melee" (Disengage) impossível.
+    if UnitExists("target") then
+        local dist = addon:TargetDistance("target")
+        if dist then
+            env.targetDistance = dist
+            env.isMelee = dist <= 5
+            env.tooCloseForRanged = dist <= 10
+            env.isDeadZone = (dist > 5 and dist <= 10)
         else
-            env.targetDistance = 100
-            env.tooCloseForRanged = false
-            env.isMelee = false
+            local melee = addon:IsInMeleeRange("target")
+            local deadZone = addon:IsInDeadZoneRange("target")
+            if melee == true then
+                env.targetDistance = 5
+                env.isMelee = true
+                env.tooCloseForRanged = true
+                env.isDeadZone = false
+            elseif deadZone == true then
+                env.targetDistance = 8
+                env.isMelee = false
+                env.tooCloseForRanged = true
+                env.isDeadZone = true
+            elseif melee == false then
+                env.targetDistance = 35
+                env.isMelee = false
+                env.tooCloseForRanged = false
+                env.isDeadZone = false
+            else
+                env.targetDistance = 100
+                env.isMelee = false
+                env.tooCloseForRanged = false
+                env.isDeadZone = false
+            end
         end
-    elseif env.targetDistance == nil then
+    else
         env.targetDistance = 100
         env.tooCloseForRanged = false
         env.isMelee = false
+        env.isDeadZone = false
     end
     env.petAlive = (type(UnitExists) == "function" and UnitExists("pet") and not (UnitIsDeadOrGhost and UnitIsDeadOrGhost("pet"))) and true or false
     env.inCombat = combatOf("player")
@@ -349,19 +368,62 @@ local function isGroupInCombat()
     return false
 end
 
+-- ---------------------------------------------------------------------------
+-- Aspects (global management) — paridade com o SFF, mas SEM travar a rotação:
+--  * só sugere o aspecto se ele estiver realmente "castable" (conhecido, sem CD);
+--  * se o jogador ignorar o aspecto algumas vezes, o addon para de insistir
+--    (trava permanente da rotação é pior do que não sugerir o aspecto).
+-- ---------------------------------------------------------------------------
+module.AspectIgnore = {}
+
+local function aspectCastable(id)
+    local knownID = module.Compat and module.Compat.HighestKnownSpellID and module.Compat.HighestKnownSpellID(id) or id
+    local spellName = module.SpellName(knownID)
+    if not spellName then return nil, nil, "sem nome" end
+    local dbg = {}
+    local ok = module.CheckCastable({
+        SpellName = spellName,
+        SpellID = knownID,
+        EnemyTargetNeeded = false,
+        NoRangeCheck = true,
+        Debug = dbg,
+    })
+    return ok, knownID, dbg.reason
+end
+
+local function suggestAspect(id, color, label)
+    if module.TickFlashUsed then return nil end
+    local ignoreUntil = module.AspectIgnore[id]
+    if ignoreUntil and GetTime() < ignoreUntil then
+        addon:DebugPrint("aspecto", label, "em pausa até " .. string.format("%.0f", ignoreUntil - GetTime()) .. "s")
+        return nil
+    end
+    local ok, knownID, reason = aspectCastable(id)
+    addon:DebugPrint("aspecto", label, "castable=", tostring(ok), "motivo=", tostring(reason))
+    if not ok then return nil end
+    module.AspectSuggestCount = (module.AspectSuggestCount or 0) + 1
+    if module.AspectSuggestCount > 3 then
+        -- o jogador ignorou o aspecto 3x: pausa 30s e libera a rotação
+        module.AspectIgnore[id] = GetTime() + 30
+        addon:DebugPrint("aspecto", label, "pausado 30s (3 sugestões sem cast)")
+        return nil
+    end
+    if module:Suggest(knownID, color) then return true end
+    return nil
+end
+
 function module:ManageAspects(env)
-    local _, _ = nil, nil
     -- Out of combat: Cheetah solo / Pack in group
     if not isGroupInCombat() then
         local numParty = groupCount(GetNumPartyMembers)
         local numRaid = groupCount(GetNumRaidMembers)
         if numParty > 0 or numRaid > 1 then
             if not module.IsAspectOfPackActive() then
-                return module:Suggest(13159, "Utility")
+                return suggestAspect(13159, "Utility", "Pack")
             end
         else
             if not module.IsAspectOfCheetahActive() then
-                return module:Suggest(5118, "Utility")
+                return suggestAspect(5118, "Utility", "Cheetah")
             end
         end
         return nil
@@ -371,11 +433,11 @@ function module:ManageAspects(env)
         local beingFocused = (type(UnitIsUnit) == "function" and UnitIsUnit("targettarget", "player"))
         if beingFocused then
             if not module.IsAspectOfMonkeyActive() then
-                return module:Suggest(13163, "Utility")
+                return suggestAspect(13163, "Utility", "Monkey")
             end
         else
             if not module.IsAspectOfBeastActive() then
-                return module:Suggest(13161, "Utility")
+                return suggestAspect(13161, "Utility", "Beast")
             end
         end
         return nil
@@ -383,7 +445,7 @@ function module:ManageAspects(env)
     local dangerousAspect = module.IsAspectOfCheetahActive() or module.IsAspectOfPackActive()
     if not env.tooCloseForRanged and (env.manaPct > 70 or not module.IsAspectActive() or dangerousAspect) then
         if not module.IsAspectOfHawkActive() then
-            return module:Suggest(13165, "Utility")
+            return suggestAspect(13165, "Utility", "Hawk")
         end
     end
     return nil
@@ -538,21 +600,40 @@ function module:Suggest(spellID, color)
     return true
 end
 
-function module:TryFlash(spellID, color, condition, name, env)
+function module:TryFlash(spellID, color, condition, name, env, opts)
     if module.TickFlashUsed then return false end
     local knownID = module.Compat and module.Compat.HighestKnownSpellID and module.Compat.HighestKnownSpellID(spellID) or spellID
     local spellName = module.SpellName(knownID or spellID)
-    if not spellName then return false end
-    if module.IsPressSuppressed(spellName) then return false end
+    if not spellName then
+        addon:DebugPrint("tryflash", tostring(name or spellID), "BLOQUEADO: nome da spell não resolvido")
+        return false
+    end
+    if module.IsPressSuppressed(spellName) then
+        addon:DebugPrint("tryflash", tostring(name or spellID), "BLOQUEADO: botão pressionado agora")
+        return false
+    end
     if type(condition) == "function" then
         local ok, res = pcall(condition, env)
-        if not ok or not res then return false end
+        if not ok or not res then
+            addon:DebugPrint("tryflash", tostring(name or spellID), "BLOQUEADO: condição")
+            return false
+        end
     end
-    if not module.CheckCastable({
+    local dbg = {}
+    local castable = module.CheckCastable({
         SpellName = spellName,
         SpellID = knownID or spellID,
-        EnemyTargetNeeded = true,
-    }) then return false end
+        EnemyTargetNeeded = not (opts and opts.noEnemy),
+        NoRangeCheck = (opts and opts.noRange) and true or nil,
+        NotIfActive = (opts and opts.notIfActive) and true or nil,
+        Debug = dbg,
+    })
+    module.LastCastDebug = dbg
+    if not castable then
+        addon:DebugPrint("tryflash", tostring(name or spellID), "BLOQUEADO:", tostring(dbg.reason))
+        return false
+    end
+    addon:DebugPrint("tryflash", tostring(name or spellID), "OK (sugere)")
     return module:Suggest(knownID or spellID, color)
 end
 
@@ -563,33 +644,24 @@ function module:GetSuggestion()
     module.TickFlashUsed = nil
     module.PendingSuggestion = nil
     pcall(module.HookActionButtonPress)
-    if IsMounted and IsMounted() then return nil end
-    if isCastingSomething("player") then return nil end
+    if IsMounted and IsMounted() then
+        addon:DebugPrint("GetSuggestion: montado — nada sugerido")
+        return nil
+    end
+    if isCastingSomething("player") then
+        addon:DebugPrint("GetSuggestion: conjurando/canalizando — nada sugerido")
+        return nil
+    end
 
     local env = module:BuildEnv()
+    addon:DebugPrint(string.format(
+        "env enemy=%s combate=%s melee=%s longe=%s dist=%s aoe=%s hp=%s mana=%s pet=%s autoShot=%s",
+        tostring(env.hasActiveEnemy), tostring(env.inCombat), tostring(env.isMelee),
+        tostring(env.tooCloseForRanged), tostring(env.targetDistance), tostring(env.isAoE),
+        tostring(env.myHP), tostring(env.manaPct), tostring(env.petAlive), tostring(addon.AutoShoot)))
 
     -- Pending suggestion from aspects/pet/etc. wins for this tick.
     if self:ManageAspects(env) then return module.PendingSuggestion end
-
-    -- Pet management
-    if env.petAlive then
-        local mending = module.HasFamilyBuff("pet", "MendPet")
-        local petHP = 100
-        if type(UnitHealth) == "function" and type(UnitHealthMax) == "function" then
-            petHP = safePct(UnitHealth("pet"), UnitHealthMax("pet"))
-        end
-        if petHP < 70 and not mending then
-            if module:TryFlash(136, "Utility", function() return true end, "Mend Pet", env) then
-                return module.PendingSuggestion
-            end
-        end
-    else
-        if not module.PET_IS_DEAD then
-            if module:TryFlash(883, "Utility", function() return true end, "Call Pet", env) then
-                return module.PendingSuggestion
-            end
-        end
-    end
 
     -- Hunter's Mark
     if env.hasActiveEnemy and not module.IsMarkedByUs() and not module.IsMarked("target") then
@@ -615,11 +687,93 @@ function module:GetSuggestion()
         if module.PendingSuggestion then return module.PendingSuggestion end
     end
 
-    -- Auto Shot (filler)
-    if env.hasActiveEnemy and not env.isMelee and not module:IsPressSuppressed(module.SpellName(75)) then
+    -- Pet management (utilidade): vem DEPOIS da rotação da spec, para nunca
+    -- bloquear as habilidades de combate (o SFF documenta o mesmo: "Curar/
+    -- Chamar Pet piscam JUNTO com a rotação (não bloqueiam)").
+    if env.petAlive then
+        local mending = module.HasFamilyBuff("pet", "MendPet")
+        local petHP = 100
+        if type(UnitHealth) == "function" and type(UnitHealthMax) == "function" then
+            petHP = safePct(UnitHealth("pet"), UnitHealthMax("pet"))
+        end
+        if petHP < 70 and not mending then
+            if module:TryFlash(136, "Utility", function() return true end, "Mend Pet", env,
+                { noEnemy = true, noRange = true, notIfActive = true }) then
+                return module.PendingSuggestion
+            end
+        end
+    else
+        if not module.PET_IS_DEAD then
+            if module:TryFlash(883, "Utility", function() return true end, "Call Pet", env,
+                { noEnemy = true, noRange = true }) then
+                return module.PendingSuggestion
+            end
+        else
+            -- Pet está morto: tenta Revive Pet (se não estiver castando já)
+            if module:TryFlash(34497, "Utility", function() return true end, "Revive Pet", env,
+                { noEnemy = true, noRange = true }) then
+                return module.PendingSuggestion
+            end
+        end
+    end
+
+    -- Racial (low priority: only fires when nothing else was suggested this tick,
+    -- so it never blocks the normal rotation).
+    local core = _G.CFA
+    if core and core.SuggestRacial and core:SuggestRacial(module, env) then return module.PendingSuggestion end
+
+    -- Auto Shot (filler) — só se não estiver em auto-repetição (started by client)
+    if env.hasActiveEnemy and not env.isMelee and not addon.AutoShoot
+        and not module:IsPressSuppressed(module.SpellName(75)) then
         if module:Suggest(75, "Damage") then return module.PendingSuggestion end
     end
     return nil
+end
+
+-- ---------------------------------------------------------------------------
+-- /cfa debug — relatório pontual da rotação no estado atual (por nó).
+-- ---------------------------------------------------------------------------
+function module.DebugRotation()
+    local specKey = module:DetectSpec()
+    local env = module:BuildEnv()
+    print("|cff44ddff[CFA dbg]|r ===== RELATÓRIO DA ROTAÇÃO =====")
+    print(string.format("|cff44ddff[CFA dbg]|r spec=%s | inimigo=%s | combate=%s | melee=%s | longe=%s | dist=%s | aoe=%s | hp=%s | mana=%s | pet=%s | autoShot=%s",
+        tostring(specKey), tostring(env.hasActiveEnemy), tostring(env.inCombat), tostring(env.isMelee),
+        tostring(env.tooCloseForRanged), tostring(env.targetDistance), tostring(env.isAoE),
+        tostring(env.myHP), tostring(env.manaPct), tostring(env.petAlive), tostring(addon.AutoShoot)))
+    print(string.format("|cff44ddff[CFA dbg]|r aspectos: guepardo=%s matilha=%s falcão=%s besta=%s macaco=%s",
+        tostring(module.IsAspectOfCheetahActive()), tostring(module.IsAspectOfPackActive()),
+        tostring(module.IsAspectOfHawkActive()), tostring(module.IsAspectOfBeastActive()),
+        tostring(module.IsAspectOfMonkeyActive())))
+    print("|cff44ddff[CFA dbg]|r --- nós da spec ---")
+    local nodes = module:GetEffectiveNodes(specKey) or {}
+    local preds = module.RotationPredicates or {}
+    for _, node in ipairs(nodes) do
+        local condOK = true
+        if node.enabled == false then
+            condOK = false
+        elseif node.condition and node.condition ~= "" then
+            local p = preds[node.condition]
+            if type(p) == "table" and type(p.fn) == "function" then
+                local ok, r = pcall(p.fn, env)
+                condOK = ok and r and true or false
+            end
+        end
+        local name = module.SpellName(node.spellID)
+        local knownID = (module.Compat and module.Compat.HighestKnownSpellID
+            and module.Compat.HighestKnownSpellID(node.spellID)) or node.spellID
+        local dbg = {}
+        local cast = false
+        if condOK and name then
+            cast = module.CheckCastable({
+                SpellName = name, SpellID = knownID,
+                EnemyTargetNeeded = true, Debug = dbg,
+            }) and true or false
+        end
+        print(string.format("|cff44ddff[CFA dbg]|r %-16s cond=%-5s known=%-5s cast=%-5s %s",
+            tostring(node.id), tostring(condOK),
+            tostring(module.Compat.SpellKnown(knownID)), tostring(cast), tostring(dbg.reason or "")))
+    end
 end
 
 -- ---------------------------------------------------------------------------

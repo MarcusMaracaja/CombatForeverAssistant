@@ -18,7 +18,7 @@ interrupt, defensive, utility) or a single user-chosen color.
 It does **not** press the key for you — it only highlights the button. You stay in
 control.
 
-### Status — early development, **not playable yet**
+### Status — early development (Hunter rotation working, other classes pending)
 
 | Area | State |
 |---|---|
@@ -28,12 +28,15 @@ control.
 | Border width slider (0–60 px), single-color option, per-function colors | Working (tested in game) |
 | Key button (draggable widget showing the bound key, lock option, "always show", 6 fonts, size, background/text color, transparency, reset) | Working (tested in game) |
 | **Buff library** (`CFA.BuffLib`) — all 9 vanilla classes, all ranks, aura/cast IDs, tier tracking | Implemented — **aura reads rewritten to `C_UnitAuras.GetAuraDataByIndex`** (H-0185): `UnitBuff`/`UnitDebuff` don't exist on Forever; **not yet verified in game** |
-| **Hunter class module (SV / BM / MM)** — declarative rotation, spec detection via **C_Traits ordinals** (tested in game: `spec: C_Traits F=0 M=0 S=10`), Castable engine + aura beliefs + persistent aspect belief | Implemented — spec detection verified in game; combat rotation unblocked (spellbook probe fixed, H-0187) — **full runtime test pending** |
+| **Hunter class module (SV / BM / MM)** — declarative rotation, spec detection via **C_Traits ordinals** (tested in game: `spec: C_Traits F=0 M=0 S=10`), Castable engine + aura beliefs + persistent aspect belief | Working — **rotation now recommends in game** (H-0196): the castability gate was called with the wrong convention (`self`/`z` mix-up), which silently rejected every combat spell and left only the aspect flashing |
+| **Hunter rotation** — aspects (Cheetah/Hawk/Beast/Monkey/Pack), Hunter's Mark, Concussive Shot, pet management, spec rotation (Aimed Shot / Serpent Sting / Arcane Shot / Multi-Shot / Rapid Fire / Mongoose / Raptor / Disengage), racial, Auto Shot as filler | Working — **verified in game by the user** (H-0196/H-0197); dead zone (5–10 yd) now triggers **Disengage** |
+| **Global racial system** — every race/class combination of WoW Forever (Human, Dwarf, Night Elf, Gnome, Orc, Undead, Tauren, Troll, Skyborne) | Implemented (H-0189/H-0190) — low priority: only suggests when the rotation has nothing else to say |
+| **Debug commands** — `/cfa debug` (on/off + rotation report), `/cfa debug on|off`, `/cfa probe` (client API dump) | Implemented (H-0196) — prints the reason every node was rejected |
 | **Rotation editor window** (per-character node toggles, per-node conditions/filters via 6 cascade axes + special predicates, icon-click flash test, `^`/`v` reorder, BM/MM/SV tabs, reset-to-default) | Implemented — color codes fixed (H-0186/0187) — **not yet verified in game** |
 | Login welcome (spec bless + spec + detection source + race greeting) | Working (tested in game — prints on first tick) |
 | Class modules (Shaman, Warrior, Druid, Paladin) | **Not implemented yet** — next phases |
 
-### Development log (2026-11-17/18)
+### Development log (2026-11-17/18/19)
 
 - **H-0178** — SavedVariables never persisted (orphan table) — user-authored fix via `ADDON_LOADED` re-anchoring.
 - **H-0179/0180/0181/0182** — official logo, minimap button, addon-list icon, source art.
@@ -46,6 +49,22 @@ control.
 - **H-0187** — rotation dead again: spellbook scan (`GetSpellBookItemInfo`) doesn't respond
   on this client → "known" now via `C_SpellBook.IsSpellKnownOrInSpellBook` + rank-family
   table (Hunter); castable decisions by ID; color codes fully fixed.
+- **H-0189/H-0190** — **global racial system** for every race/class combination of WoW
+  Forever; secret-value guard in the cooldown reader.
+- **H-0192 → H-0195** — castability engine rewritten to follow the SpellFlash Forever
+  pattern: spell known / cooldown / GCD / range / auras / enemy target, all fail-open
+  where the client can't read a value.
+- **H-0196** — **the rotation was dead because of a single call convention**: the
+  castability gate is a method (`self` implicit) but was called with `.`, so the
+  argument arrived as `nil` and *every* combat spell was rejected — only the aspect
+  flashed. Fixed, plus: aspect detection by **localized name** (BuffLib only matched
+  English names), aspect no longer blocks the rotation (3 ignored suggestions → 30 s
+  pause), `nil` spell-name crash fixed, and the new `/cfa debug` + `/cfa probe` commands.
+- **H-0197** — **Disengage never fired**: `isMelee` and `tooCloseForRanged` were always
+  identical (`≤ 10 yd`), so "dead zone" was a contradiction. Now the real Hunter
+  dead zone (5–10 yd) is detected (measured distance, or *Atacar* vs *Corte de Asa*
+  probes) and Disengage triggers; pet utilities (Mend/Call/Revive Pet) moved **after**
+  the spec rotation so they can no longer starve the combat rotation.
 
 > **Saved variables:** settings persist on `/reload` (and on logout/clean exit), like any
 > Blizzard client. An earlier bug made menu changes persist nowhere: `addon.db` was bound
@@ -71,6 +90,27 @@ control.
 > `RunDeclaredRotation`), spec detection via `C_Traits` (override respected first),
 > rank resolution via the spell book, aura beliefs for secret auras in combat, and
 > press-suppression so the highlight dies the instant you press the key.
+
+### Debugging the rotation
+
+| Command | What it does |
+|---|---|
+| `/cfa debug` | toggles debug mode and prints the rotation report |
+| `/cfa debug on` / `/cfa debug off` | enables / disables it explicitly |
+| `/cfa probe` | dumps the client APIs the rotation relies on (class, race, combat, distance, `C_Spell*`, `C_SpellBook`, auras, cooldowns) |
+| `/cfa status` | active module, detected spec and the last rotation error |
+
+With debug mode on, every tick prints the environment (enemy / combat / melee / dead
+zone / distance / AoE), every node with the result of its condition, and — for each
+rejected spell — the exact reason (`out of range`, `on cooldown (12.0s of 15.0s)`,
+`spell unknown`, `no enemy target`, …).
+
+### Hunter dead zone (Disengage)
+
+In WotLK the hunter's melee abilities need **5 yd** and the ranged ones stop working
+between **5 and 10 yd**. The addon measures the distance to the target and, when the
+client can't report it, compares the *Atacar* action (≤5 yd) with *Wing Clip* (≤10 yd)
+to detect the dead zone — where **Disengage** is the right pick.
 
 ### Highlight modes
 
@@ -100,7 +140,7 @@ interrupção, defensivo, utilidade) ou uma cor única escolhida por você.
 
 Ele **não** aperta a tecla por você — apenas destaca o botão. Você continua no controle.
 
-### Status — desenvolvimento inicial, **ainda não jogável**
+### Status — desenvolvimento inicial (rotação do Hunter funcionando, outras classes pendentes)
 
 | Área | Estado |
 |---|---|
@@ -110,12 +150,15 @@ Ele **não** aperta a tecla por você — apenas destaca o botão. Você continu
 | Slider de largura da moldura (0–60 px), cor única, cores por função | Funcionando (testado em jogo) |
 | Botão de tecla (widget arrastável mostrando a tecla, trava, "sempre exibir", 6 fontes, tamanho, cor de fundo/texto, transparência, restaurar padrões) | Funcionando (testado em jogo) |
 | **Biblioteca de buffs** (`CFA.BuffLib`) — as 9 classes vanilla, todos os ranks, IDs de aura/cast, tiers, aviso de buff desatualizado | Implementada — **leitura de auras reescrita para `C_UnitAuras.GetAuraDataByIndex`** (H-0185): `UnitBuff`/`UnitDebuff` não existem no Forever; **ainda não verificada em jogo** |
-| **Módulo Hunter (SV / BM / MM)** — rotação declarativa, detecção de spec via **ordinals de `treeIDs` do C_Traits** (testada em jogo: `spec: C_Traits F=0 M=0 S=10`), engine de Castable + crenças de aura + crença de aspecto persistente | Implementado — detecção de spec verificada em jogo; rotação do combate desbloqueada (probe do spellbook corrigido, H-0187) — **teste em jogo completo pendente** |
+| **Módulo Hunter (SV / BM / MM)** — rotação declarativa, detecção de spec via **ordinals de `treeIDs` do C_Traits** (testada em jogo: `spec: C_Traits F=0 M=0 S=10`), engine de Castable + crenças de aura + crença de aspecto persistente | Funcionando — **a rotação agora recomenda em jogo** (H-0196): o gate de castabilidade era chamado com a convenção errada (`self`/`z` trocados), recusando silenciosamente todas as spells de combate e deixando só o aspecto piscar |
+| **Rotação do Hunter** — aspectos (Guepardo/Falcão/Fera/Macaco/Matilha), Marca do Caçador, Tiro Concussivo, gestão do pet, rotação da spec (Disparo Preciso / Mordida de Serpente / Disparo Arcano / Disparo Múltiplo / Disparo Rápido / Mordida de Mongoose / Golpe de Raptor / Fuga), racial e Tiro Automático como filler | Funcionando — **verificado em jogo pelo usuário** (H-0196/H-0197); a zona morta (5–10 yd) agora dispara o **Fuga (Disengage)** |
+| **Sistema global de raciais** — todas as combinações de raça/classe do WoW Forever (Humano, Anão, Elfo Noturno, Gnomo, Orc, Morto-vivo, Tauren, Troll, Skyborne) | Implementado (H-0189/H-0190) — baixa prioridade: só sugere quando a rotação não tem nada a dizer |
+| **Comandos de debug** — `/cfa debug` (liga/desliga + relatório da rotação), `/cfa debug on|off`, `/cfa probe` (dump das APIs do cliente) | Implementado (H-0196) — mostra o motivo de cada nó recusado |
 | **Janela de edição de rotação** (liga/desliga nós por personagem, condições/filtros por nó via 6 eixos de filtro + predicados especiais, clique no ícone para testar o flash, `^`/`v` reordenar, abas BM/MM/SV, restaurar padrão) | Implementada — códigos de cor corrigidos (H-0186/0187) — **ainda não verificada em jogo** |
 | Boas-vindas no login (bênção da spec + spec + origem da detecção + saudação racial) | Funcionando (testada em jogo — imprime no primeiro tick) |
 | Módulos de classe (Shaman, Warrior, Druid, Paladin) | **Ainda não implementados** — próximas fases |
 
-### Log de desenvolvimento (2026-11-17/18)
+### Log de desenvolvimento (2026-11-17/18/19)
 
 - **H-0178** — SavedVariables nunca persistem (tabela órfã) — correção do usuário via re-âncora no `ADDON_LOADED`.
 - **H-0179/0180/0181/0182** — logo oficial, botão do minimapa, ícone na lista de addons, arte-fonte.
@@ -128,6 +171,21 @@ Ele **não** aperta a tecla por você — apenas destaca o botão. Você continu
 - **H-0187** — rotação morta de novo: a varredura do spellbook (`GetSpellBookItemInfo`) não responde neste
   cliente → "conhecido" agora via `C_SpellBook.IsSpellKnownOrInSpellBook` + tabela FAMILIES de ranks do Hunter;
   decisões de castable por ID; códigos de cor definitivamente corrigidos.
+- **H-0189/H-0190** — **sistema global de raciais** para todas as combinações de raça/classe do WoW Forever;
+  proteção contra *secret values* na leitura de cooldown.
+- **H-0192 → H-0195** — engine de castabilidade reescrito no padrão do SpellFlash Forever:
+  spell conhecida / cooldown / GCD / alcance / auras / alvo inimigo, tudo *fail-open* quando o
+  cliente não consegue ler um valor.
+- **H-0196** — **a rotação estava morta por causa de uma única chamada**: o gate de castabilidade é um
+  método (`self` implícito) mas era chamado com `.`, então o argumento chegava `nil` e *todas* as spells
+  de combate eram recusadas — só o aspecto piscava. Corrigido, mais: detecção de aspecto pelo **nome
+  localizado** (o BuffLib só casava nome em inglês), o aspecto não trava mais a rotação (3 sugestões
+  ignoradas → pausa de 30 s), crash de nome `nil` corrigido e novos comandos `/cfa debug` e `/cfa probe`.
+- **H-0197** — **o Fuga (Disengage) nunca disparava**: `isMelee` e `tooCloseForRanged` eram sempre
+  iguais (`≤ 10 yd`), então a "zona morta" era uma contradição. Agora a zona morta real (5–10 yd) é
+  detectada (distância medida, ou sondagem *Atacar* × *Corte de Asa*) e o Fuga dispara; as utilidades
+  de pet (Curar/Chamar/Reviver Ajudante) passaram para **depois** da rotação da spec, para não
+  mais bloquearem as habilidades de combate.
 
 > **Variáveis salvas:** as configurações persistem no `/reload` (e no logout/saída limpa),
 > como em qualquer cliente Blizzard. Um bug anterior fazia as mudanças sumirem: `addon.db`
@@ -154,6 +212,27 @@ Ele **não** aperta a tecla por você — apenas destaca o botão. Você continu
 > `RunDeclaredRotation`), detecção de spec via `C_Traits` (override tem prioridade),
 > resolução de rank pelo spell book, crenças de aura para as auras secretas em combate
 > e supressão do brilho assim que você aperta a tecla.
+
+### Depurando a rotação
+
+| Comando | O que faz |
+|---|---|
+| `/cfa debug` | liga/desliga o modo debug e imprime o relatório da rotação |
+| `/cfa debug on` / `/cfa debug off` | liga / desliga explicitamente |
+| `/cfa probe` | despeja as APIs do cliente usadas pela rotação (classe, raça, combate, distância, `C_Spell*`, `C_SpellBook`, auras, cooldowns) |
+| `/cfa status` | módulo ativo, spec detectada e o último erro da rotação |
+
+Com o modo debug ligado, cada tick imprime o ambiente (inimigo / combate / melee / zona
+morta / distância / AoE), cada nó com o resultado da sua condição e — para cada spell
+recusada — o motivo exato (`fora de alcance`, `em cooldown (12.0s de 15.0s)`,
+`spell desconhecida`, `sem alvo inimigo`, …).
+
+### Zona morta do Hunter (Fuga / Disengage)
+
+Em WotLK as habilidades corpo a corpo do caçador precisam de **5 yd** e as de longo
+alcance param de funcionar entre **5 e 10 yd**. O addon mede a distância do alvo e,
+quando o cliente não consegue informar, compara a ação *Atacar* (≤5 yd) com o *Corte de
+Asa* (≤10 yd) para detectar a zona morta — onde o **Fuga** é a habilidade certa.
 
 ### Modos de destaque
 
