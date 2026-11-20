@@ -153,7 +153,13 @@ buff controls are not implemented until those class modules return to the build.
 
 ### Installation
 
-Copy the `CombatForeverAssistant` folder into `Interface\AddOns\` and type `/cfa`.
+On GitHub, select **Code > Download ZIP** for the `main` branch and extract the archive.
+GitHub names the extracted folder `CombatForeverAssistant-main`; rename it to
+`CombatForeverAssistant` and place it in `Interface\AddOns\`. Verify that
+`CombatForeverAssistant.toc` is directly inside the addon folder:
+`Interface\AddOns\CombatForeverAssistant\CombatForeverAssistant.toc`. Do not keep the
+`-main` suffix or nest a second `CombatForeverAssistant` folder inside it. Launch WoW,
+enable the addon in the AddOns list if needed, and type `/reload`.
 
 ### Requirements
 
@@ -309,7 +315,13 @@ módulos voltarem ao build.
 
 ### Instalação
 
-Copie a pasta `CombatForeverAssistant` para `Interface\AddOns\` e digite `/cfa`.
+No GitHub, escolha **Code > Download ZIP** para baixar a branch `main` e extraia o arquivo.
+A pasta extraída se chamará `CombatForeverAssistant-main`; renomeie-a para
+`CombatForeverAssistant` e coloque-a em `Interface\AddOns\`. Confira se
+`CombatForeverAssistant.toc` ficou diretamente dentro da pasta do addon:
+`Interface\AddOns\CombatForeverAssistant\CombatForeverAssistant.toc`. Não mantenha o sufixo
+`-main` nem crie outra pasta `CombatForeverAssistant` dentro dela. Abra o WoW, habilite o
+addon na lista se necessário e digite `/reload`.
 
 ### Requisitos
 
