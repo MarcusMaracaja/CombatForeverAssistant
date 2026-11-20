@@ -55,7 +55,7 @@ local strings = {
     ["minimap_hidden"]          = { en = "Minimap button hidden.", pt = "Botao do minimapa oculto." },
 
     -- About
-    ["about_body"]              = { en = "Combat Forever Assistant highlights the ability you should press next, based on your spec, talents, target, mana, range and combat state.\n\nIt never presses keys or casts for you.\n\nAvailable module: Hunter.\n\nCreated by Marcus, with Inkling 2 Small Free (OpenCode) as technology partner.", pt = "O Combat Forever Assistant destaca (/cfa) a habilidade que voce deveria usar a seguir, com base na spec, talentos, alvo, mana, alcance e estado de combate.\n\nEle nunca aperta a tecla nem conjura por voce.\n\nModulo disponivel: Hunter.\n\nCriado por Marcus, com Inkling 2 Small Free (OpenCode) como parceiro de tecnologia." },
+    ["about_body"]              = { en = "Combat Forever Assistant highlights the ability you should press next, based on your spec, talents, target, mana, range and combat state.\n\nIt never presses keys or casts for you.\n\nAvailable modules: Hunter and Shaman.\n\nCreated by Marcus, with Inkling 2 Small Free (OpenCode) as technology partner.", pt = "O Combat Forever Assistant destaca (/cfa) a habilidade que voce deveria usar a seguir, com base na spec, talentos, alvo, mana, alcance e estado de combate.\n\nEle nunca aperta a tecla nem conjura por voce.\n\nModulos disponiveis: Hunter e Shaman.\n\nCriado por Marcus, com Inkling 2 Small Free (OpenCode) como parceiro de tecnologia." },
     ["about_version"]           = { en = "Version", pt = "Versao" },
 
     -- Equipment recommendations
@@ -90,6 +90,21 @@ local strings = {
     ["extra_aspect_monkey"]     = { en = "Aspect of the Monkey", pt = "Aspecto do Macaco" },
     ["extra_aspect_beast"]      = { en = "Aspect of the Beast", pt = "Aspecto da Fera" },
     ["extra_aspect_hawk"]       = { en = "Aspect of the Hawk", pt = "Aspecto do Falcao" },
+    ["shaman_tab"]              = { en = "Shaman", pt = "Shaman" },
+    ["shaman_enabled"]          = { en = "Enable Shaman recommendations", pt = "Ativar recomendacoes de Shaman" },
+    ["shaman_spec_header"]      = { en = "Talent tree", pt = "Arvore de talentos" },
+    ["shaman_spec_auto"]        = { en = "Automatic", pt = "Automatico" },
+    ["shaman_spec_ele"]         = { en = "Elemental", pt = "Elemental" },
+    ["shaman_spec_enh"]         = { en = "Enhancement", pt = "Enhancement" },
+    ["shaman_spec_rest"]        = { en = "Restoration (caster DPS fallback)", pt = "Restauracao (rotacao caster basica)" },
+    ["shaman_rotation_hint"]    = { en = "Elemental and Enhancement use separate priorities. Restoration currently uses the caster damage fallback; healing is not automated.", pt = "Elemental e Enhancement usam prioridades proprias. Restauracao usa uma rotacao caster basica; curas nao sao recomendadas." },
+    ["shaman_extra_header"]     = { en = "Extra — buffs and support", pt = "Extra — buffs e suporte" },
+    ["shaman_extra_hint"]       = { en = "These can be highlighted alongside a rotation ability. CFA never casts them.", pt = "Podem brilhar junto com uma habilidade da rotacao. O CFA nao conjura por voce." },
+    ["shaman_buff_lightning_shield"] = { en = "Lightning Shield", pt = "Escudo Relampejante" },
+    ["shaman_buff_flametongue"] = { en = "Flametongue Weapon (Elemental/Restoration)", pt = "Arma Flametongue (Elemental/Restauracao)" },
+    ["shaman_buff_windfury"]    = { en = "Windfury Weapon (Enhancement)", pt = "Arma Windfury (Enhancement)" },
+    ["shaman_buff_strength"]    = { en = "Strength of Earth Totem (group support)", pt = "Totem Forca da Terra (suporte ao grupo)" },
+    ["shaman_buff_mana_spring"] = { en = "Mana Spring Totem (pre-combat / low mana / long fight)", pt = "Totem Fonte de Mana (pre-combate / pouca mana / luta longa)" },
 
     ["rotation_error"]          = { en = "[CFA] Rotation error (see /cfa status): %s", pt = "[CFA] Erro na rotação (veja /cfa status): %s" },
 

@@ -3,7 +3,7 @@
 ## Notes: Rotation assistant for WoW Forever: highlights the recommended ability on your action bars. | Assistente de rotacao para o WoW Forever: destaca na barra de acao a habilidade recomendada.
 ## IconTexture: Interface\AddOns\CombatForeverAssistant\Textures\CFA_Minimap.tga
 ## Author: Marcus
-## Version: 0.2.0
+## Version: 0.3.0
 ## SavedVariables: CombatForeverAssistantDB
 ## SavedVariablesPerCharacter: CombatForeverAssistantCharDB
 ## DefaultState: Enabled
@@ -24,4 +24,6 @@ Modules\Hunter\Scripts_MM.lua
 Modules\Hunter\Scripts.lua
 Modules\Hunter\RotationEditor.lua
 Modules\Hunter\Options.lua
+Modules\Shaman\Scripts.lua
+Modules\Shaman\Options.lua
 Equipment.lua

@@ -18,11 +18,11 @@ interrupt, defensive, utility) or a single user-chosen color.
 It does **not** press the key for you — it only highlights the button. You stay in
 control.
 
-### Status — early development (Hunter rotation working, other classes pending)
+### Status — early development (Hunter working; Shaman available for testing)
 
 | Area | State |
 |---|---|
-| Addon loads, `/cfa` menu (General / Key button / Equipment / About) | Working (tested in game); new Equipment tab needs in-game validation |
+| Addon loads, `/cfa` menu (General / Key button / class / Equipment / About) | Working (tested in game); new Equipment tab needs in-game validation |
 | Menu settings persist — fixes the orphan-table bug where changes were written to a table detached from the SV global | Corrected (user-authored fix) — not yet verified in game |
 | Highlight: **circle** or **border** modes | Working (tested in game) |
 | Border width slider (0–60 px), single-color option, per-function colors | Working (tested in game) |
@@ -35,8 +35,9 @@ control.
 | **Equipment recommendations** (19 gear slots, select equipped/bag items, per-item conditions, highlights the action-bar item without using/equipping it) | Implemented (H-0208) — **not yet verified in game** |
 | **Rotation editor window** (per-character node toggles, per-node conditions/filters via 6 cascade axes + special predicates, icon-click flash test, `^`/`v` reorder, BM/MM/SV/Extra tabs, reset-to-default) | Implemented — color codes fixed (H-0186/0187) — **not yet verified in game** |
 | **Hunter Extra tab** (per-character toggles for Cheetah, Pack, Monkey, Beast and Hawk suggestions) | Implemented (H-0208) — **not yet verified in game** |
+| **Shaman module** (Elemental and Enhancement damage priorities, Restoration caster fallback, configurable Extra buffs) | Implemented (H-0213) — **not yet verified in game**; Restoration healing is not automated |
 | Login welcome (spec bless + spec + detection source + race greeting) | Working (tested in game — prints on first tick) |
-| Class modules (Shaman, Warrior, Druid, Paladin) | **Not implemented yet** — next phases |
+| Class modules (Warrior, Druid, Paladin) | **Not implemented yet** — next phases |
 
 ### Development log (2026-11-17/18/19/20)
 
@@ -82,6 +83,9 @@ control.
   selected `false`) and corrected the Extra checkboxes' colon-method call, which made saved
   enabled aspects appear unchecked. Extra remains a toggle list: its recommendation conditions
   are automatic and fixed by the Hunter aspect logic.
+- **H-0213** — Added the Shaman module: Elemental/Enhancement priorities, automatic or manual
+  talent-tree selection, and independently configurable buff recommendations. The Restoration
+  tree currently uses a caster-DPS fallback (no healing). Needs in-game testing.
 
 > **Saved variables:** settings persist on `/reload` (and on logout/clean exit), like any
 > Blizzard client. An earlier bug made menu changes persist nowhere: `addon.db` was bound
@@ -187,8 +191,9 @@ Ele **não** aperta a tecla por você — apenas destaca o botão. Você continu
 | **Recomendações de itens de equipamento** (19 slots, seleção de itens equipados/bolsas, condições por item, destaca o item na barra sem usá-lo/equipá-lo) | Implementadas (H-0208) — **ainda não verificadas em jogo** |
 | **Janela de edição de rotação** (liga/desliga nós por personagem, condições/filtros por nó via 6 eixos de filtro + predicados especiais, clique no ícone para testar o flash, `^`/`v` reordenar, abas BM/MM/SV/Extra, restaurar padrão) | Implementada — códigos de cor corrigidos (H-0186/0187) — **ainda não verificada em jogo** |
 | **Aba Extra do Hunter** (liga/desliga por personagem as recomendações de Guepardo, Matilha, Macaco, Fera e Falcão) | Implementada (H-0208) — **ainda não verificada em jogo** |
+| **Módulo Shaman** (prioridades de dano Elemental e Enhancement, fallback caster para Restauração, buffs Extra configuráveis) | Implementado (H-0213) — **ainda não verificado em jogo**; curas de Restauração não são automatizadas |
 | Boas-vindas no login (bênção da spec + spec + origem da detecção + saudação racial) | Funcionando (testada em jogo — imprime no primeiro tick) |
-| Módulos de classe (Shaman, Warrior, Druid, Paladin) | **Ainda não implementados** — próximas fases |
+| Módulos de classe (Warrior, Druid, Paladin) | **Ainda não implementados** — próximas fases |
 
 ### Log de desenvolvimento (2026-11-17/18/19/20)
 
@@ -231,6 +236,9 @@ Ele **não** aperta a tecla por você — apenas destaca o botão. Você continu
 - **H-0212** — Corrigido o re-ligar de habilidades (a expressão Lua `and nil or false` sempre
   resultava em `false`) e a chamada por ponto na aba Extra, que mostrava os aspectos ativos como
   desmarcados. Extra continua sendo uma lista de ativação: as condições dos aspectos são automáticas.
+- **H-0213** — Adicionado o módulo Shaman: prioridades Elemental/Enhancement, seleção automática
+  ou manual da árvore e recomendações de buffs Extra independentes. Restauração usa fallback
+  caster de dano (sem cura automatizada). Precisa de teste em jogo.
 
 > **Variáveis salvas:** as configurações persistem no `/reload` (e no logout/saída limpa),
 > como em qualquer cliente Blizzard. Um bug anterior fazia as mudanças sumirem: `addon.db`

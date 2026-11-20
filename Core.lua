@@ -294,6 +294,21 @@ local FAMILIES = {
     { 13161, 1299445, 1299446, 1299447 },                       -- Aspect of the Beast
     { 13795, 14302, 14303, 14304, 14305 },                      -- Immolation Trap
     { 13813, 14310, 14311, 14312 },                             -- Explosive Trap
+    { 403, 529, 548, 915, 943, 6041, 10391, 10392, 15207, 15208 }, -- Lightning Bolt
+    { 421, 930, 2860, 10605 },                                  -- Chain Lightning
+    { 8050, 8052, 8053, 10447, 10448, 29228 },                  -- Flame Shock
+    { 8042, 8044, 8045, 8046, 10412, 10413, 10414 },            -- Earth Shock
+    { 1535, 8498, 8499, 11314, 11315 },                         -- Fire Nova
+    { 3599, 6363, 6364, 6365, 10437, 10438 },                   -- Searing Totem
+    { 8190, 10585, 10586, 10587 },                              -- Magma Totem
+    { 324, 325, 905, 945, 8134, 10431, 10432 },                 -- Lightning Shield
+    { 8024, 8027, 8030, 16339, 16341, 16342 },                  -- Flametongue Weapon
+    { 8232, 8235, 10486, 16362 },                               -- Windfury Weapon
+    { 8075, 8160, 8161, 10442, 25361 },                         -- Strength of Earth Totem
+    { 5675, 10495, 10496, 10497 },                              -- Mana Spring Totem
+    { 17364 },                                                   -- Stormstrike
+    { 16166 },                                                   -- Lightning Mastery
+    { 425336 },                                                  -- Rage of the Farseer
 }
 local familyOf = {}
 for _, fam in ipairs(FAMILIES) do
