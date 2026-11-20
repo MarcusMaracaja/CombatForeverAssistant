@@ -17,6 +17,7 @@ local tabButtons = {}
 local currentSpec = "SV"
 local cardFrames = {}
 local selectSpec  -- forward declaration (card buttons re-render the tab)
+local resetButton, hintText
 
 local PANEL_W, PANEL_H = 560, 440
 local ROW_H = 46
@@ -104,6 +105,8 @@ local function NodeConditionText(node)
     return Loc("rot_conditions_prefix", "Condições: ") .. table.concat(parts, " · ")
 end
 
+module.NodeConditionText = NodeConditionText
+
 local function getFilterTable(node)
     if type(node.filter) == "table" then
         local f = {}
@@ -120,10 +123,10 @@ local picker = nil
 
 local function GetPicker()
     if picker then return picker end
-    -- parented to the editor window: hides/moves with it, always above its cards
-    picker = CreateFrame("Frame", "CFA_HunterRotationPicker", frame or UIParent, "BackdropTemplate")
+    picker = CreateFrame("Frame", "CFA_HunterRotationPicker", UIParent, "BackdropTemplate")
     picker:SetWidth(250)
     picker:SetFrameStrata("TOOLTIP")
+    picker:SetAlpha(1)
     picker:EnableMouse(true)
     applyBackdrop(picker, 0.04, 0.04, 0.04, 1.0)
     local solidBg = picker:CreateTexture(nil, "BACKGROUND")
@@ -161,29 +164,30 @@ local function RebuildPickerRows(p, titleText, getItems, afterAction)
     p.rows = {}
     local y = 0
     for _, item in ipairs(getItems()) do
-        local row = CreateFrame(item.header and "Frame" or "Button", nil, p.child)
-        local h = item.header and 16 or 20
+        local pickerItem = item
+        local row = CreateFrame(pickerItem.header and "Frame" or "Button", nil, p.child)
+        local h = pickerItem.header and 16 or 20
         row:SetHeight(h)
         row:SetPoint("TOPLEFT", p.child, "TOPLEFT", 0, -y)
         row:SetWidth(206)
-        if item.header then
+        if pickerItem.header then
             local fs = row:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
             fs:SetPoint("LEFT", 2, 0)
-            fs:SetText(item.header)
+            fs:SetText(pickerItem.header)
         else
             row.mark = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
             row.mark:SetPoint("LEFT", 6, 0)
-            row.mark:SetText(item.checked and "|cffff8800●|r" or "")
+            row.mark:SetText(pickerItem.checked and "|cffff8800●|r" or "")
             local fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
             fs:SetPoint("LEFT", 20, 0)
             fs:SetPoint("RIGHT", -2, 0)
             fs:SetJustifyH("LEFT")
-            fs:SetText(item.label)
+            fs:SetText(pickerItem.label)
             row:SetHighlightTexture("Interface\\Buttons\\WHITE8X8", "ADD")
             local hl = row:GetHighlightTexture()
             if hl then hl:SetVertexColor(0.35, 0.2, 0.05, 0.5) end
             row:SetScript("OnClick", function()
-                item.action()
+                pickerItem.action()
                 if afterAction then afterAction() end
                 RebuildPickerRows(p, titleText, getItems, afterAction)
             end)
@@ -215,53 +219,71 @@ local function sortedPredicateKeys(preds)
     return keys
 end
 
-local function BuildAddItems(specKey, node)
+local function setConditionValue(specKey, node, key, value, setter)
+    if setter then
+        setter(key, value)
+    else
+        module:SetNodeOverride(specKey, node.id, key, value)
+    end
+end
+
+local function predicatesFor(sourceModule)
+    if sourceModule == false then return {} end
+    if type(sourceModule) == "table" then
+        return type(sourceModule.RotationPredicates) == "table" and sourceModule.RotationPredicates or {}
+    end
+    return Hunter.RotationPredicates or {}
+end
+
+local function BuildAddItems(specKey, node, setter, sourceModule)
     local items = {}
     local function Header(t) items[#items + 1] = { header = t } end
     local function Item(label, active, action)
         items[#items + 1] = { label = label, checked = active and true or false, action = action }
     end
     for _, axis in ipairs(module.FilterAxes or {}) do
-        Header(Loc(axis.labelKey, axis.key))
+        local axisKey, axisLabelKey = axis.key, axis.labelKey
+        Header(Loc(axisLabelKey, axisKey))
         for _, opt in ipairs(axis.options) do
             local value, lk = opt[1], opt[2]
             local label = (L and L[lk]) or lk
-            local cur = type(node.filter) == "table" and tonumber(node.filter[axis.key]) or 0
+            local cur = type(node.filter) == "table" and tonumber(node.filter[axisKey]) or 0
             Item(label, cur == value, function()
                 local f = getFilterTable(node)
-                if tonumber(f[axis.key]) == value then
-                    f[axis.key] = nil
+                if tonumber(f[axisKey]) == value then
+                    f[axisKey] = nil
                 else
-                    f[axis.key] = value
+                    f[axisKey] = value
                 end
                 if next(f) then
-                    module:SetNodeOverride(specKey, node.id, "filter", f)
+                    setConditionValue(specKey, node, "filter", f, setter)
                 else
-                    module:SetNodeOverride(specKey, node.id, "filter", nil)
+                    setConditionValue(specKey, node, "filter", nil, setter)
                 end
             end)
         end
     end
-    local preds = Hunter.RotationPredicates or {}
+    local preds = predicatesFor(sourceModule)
     Header(Loc("rot_special_header", "Especial"))
     Item(Loc("rot_always", "Sempre"), (not node.condition or node.condition == ""), function()
-        module:SetNodeOverride(specKey, node.id, "condition", "")
+        setConditionValue(specKey, node, "condition", "", setter)
     end)
     for _, key in ipairs(sortedPredicateKeys(preds)) do
-        local p = preds[key]
-        Item((p and p.label) or key, node.condition == key, function()
-            module:SetNodeOverride(specKey, node.id, "condition", key)
+        local predicateKey = key
+        local p = preds[predicateKey]
+        Item((p and p.label) or predicateKey, node.condition == predicateKey, function()
+            setConditionValue(specKey, node, "condition", predicateKey, setter)
         end)
     end
     Header("------------------------")
     Item(Loc("rot_clear_all", "Remover todas as condições"), false, function()
-        module:SetNodeOverride(specKey, node.id, "condition", nil)
-        module:SetNodeOverride(specKey, node.id, "filter", nil)
+        setConditionValue(specKey, node, "condition", nil, setter)
+        setConditionValue(specKey, node, "filter", nil, setter)
     end)
     return items
 end
 
-local function BuildRemoveItems(specKey, node)
+local function BuildRemoveItems(specKey, node, setter, sourceModule)
     local items = {}
     local function Header(t) items[#items + 1] = { header = t } end
     local function Item(label, action)
@@ -269,24 +291,26 @@ local function BuildRemoveItems(specKey, node)
     end
     local any = false
     if node.condition and node.condition ~= "" then
-        local p = Hunter.RotationPredicates and Hunter.RotationPredicates[node.condition]
+        local predicates = predicatesFor(sourceModule)
+        local p = predicates and predicates[node.condition]
         Item(Loc("rot_special_prefix", "Especial: ") .. ((p and p.label) or node.condition), function()
-            module:SetNodeOverride(specKey, node.id, "condition", nil)
+            setConditionValue(specKey, node, "condition", nil, setter)
         end)
         any = true
     end
     if type(node.filter) == "table" then
         for _, axis in ipairs(module.FilterAxes or {}) do
-            local v = tonumber(node.filter[axis.key])
+            local axisKey = axis.key
+            local v = tonumber(node.filter[axisKey])
             if v and v ~= 0 then
-                local axisName = stripAxisNumber(Loc(axis.labelKey, axis.key))
+                local axisName = stripAxisNumber(Loc(axis.labelKey, axisKey))
                 Item(axisName .. ": " .. axisOptionLabel(axis, v), function()
                     local f = getFilterTable(node)
-                    f[axis.key] = nil
+                    f[axisKey] = nil
                     if next(f) then
-                        module:SetNodeOverride(specKey, node.id, "filter", f)
+                        setConditionValue(specKey, node, "filter", f, setter)
                     else
-                        module:SetNodeOverride(specKey, node.id, "filter", nil)
+                        setConditionValue(specKey, node, "filter", nil, setter)
                     end
                 end)
                 any = true
@@ -296,10 +320,28 @@ local function BuildRemoveItems(specKey, node)
     if not any then Header(Loc("rot_none_active", "(nenhuma condição ativa)")) end
     Header("------------------------")
     Item(Loc("rot_clear_all", "Remover todas as condições"), function()
-        module:SetNodeOverride(specKey, node.id, "condition", nil)
-        module:SetNodeOverride(specKey, node.id, "filter", nil)
+        setConditionValue(specKey, node, "condition", nil, setter)
+        setConditionValue(specKey, node, "filter", nil, setter)
     end)
     return items
+end
+
+function module.ShowPicker(anchorBtn, titleText, getItems, afterAction)
+    ShowPicker(anchorBtn, titleText, getItems, afterAction)
+end
+
+function module.HidePicker()
+    if picker then picker:Hide() end
+end
+
+function module.ShowConditionPicker(anchorBtn, node, setter, afterAction, sourceModule)
+    ShowPicker(anchorBtn, Loc("rot_add_condition", "Adicionar condição"),
+        function() return BuildAddItems(nil, node, setter, sourceModule) end, afterAction)
+end
+
+function module.ShowRemoveConditionPicker(anchorBtn, node, setter, afterAction, sourceModule)
+    ShowPicker(anchorBtn, Loc("rot_remove_condition", "Remover condição"),
+        function() return BuildRemoveItems(nil, node, setter, sourceModule) end, afterAction)
 end
 
 -- ---------------------------------------------------------------------------
@@ -308,6 +350,12 @@ end
 local function cardDesaturate(iconBtn, disabled)
     local n = iconBtn:GetNormalTexture()
     if n and n.SetDesaturated then n:SetDesaturated(disabled and true or false) end
+end
+
+local function cropIconTexture(texture)
+    if texture and type(texture.SetTexCoord) == "function" then
+        texture:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    end
 end
 
 local function createCard(parent, specKey, node, y)
@@ -334,12 +382,9 @@ local function createCard(parent, specKey, node, y)
     iconBtn:SetNormalTexture(tex)
     iconBtn:SetPushedTexture(tex)
     iconBtn:SetHighlightTexture(tex, "ADD")
-    local n = iconBtn:GetNormalTexture()
-    if n then n:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
-    local pTex = iconBtn:GetPushedTexture()
-    if pTex then pTex:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
-    local hTex = iconBtn:GetHighlightTexture()
-    if hTex then hTex:SetTexCoord(0.08, 0.92, 0.08, 0.92) end
+    cropIconTexture(iconBtn:GetNormalTexture())
+    cropIconTexture(iconBtn:GetPushedTexture())
+    cropIconTexture(iconBtn:GetHighlightTexture())
     iconBtn:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText(tostring(node.name or node.id), 1, 1, 1)
@@ -416,7 +461,11 @@ local function createCard(parent, specKey, node, y)
     end
 
     cb:SetScript("OnClick", function(self)
-        module:SetNodeOverride(specKey, node.id, "enabled", self:GetChecked() and nil or false)
+        if self:GetChecked() then
+            module:SetNodeOverride(specKey, node.id, "enabled", true)
+        else
+            module:SetNodeOverride(specKey, node.id, "enabled", false)
+        end
         refresh()
     end)
     local function freshNode()
@@ -453,14 +502,55 @@ local function layoutSpec()
     scrollChild:SetHeight(math.max(-y, 1))
 end
 
-local function selectSpec(specKey)
+local function layoutExtra()
+    if not scrollChild then return end
+    for _, c in ipairs(cardFrames) do c:Hide(); c:SetParent(nil) end
+    cardFrames = {}
+    local aspects = {
+        { "Cheetah", "extra_aspect_cheetah", "Aspect of the Cheetah" },
+        { "Pack", "extra_aspect_pack", "Aspect of the Pack" },
+        { "Monkey", "extra_aspect_monkey", "Aspect of the Monkey" },
+        { "Beast", "extra_aspect_beast", "Aspect of the Beast" },
+        { "Hawk", "extra_aspect_hawk", "Aspect of the Hawk" },
+    }
+    local y = -4
+    for _, aspect in ipairs(aspects) do
+        local aspectKey, labelKey, fallback = aspect[1], aspect[2], aspect[3]
+        local row = CreateFrame("Frame", nil, scrollChild)
+        row:SetHeight(30)
+        row:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, y)
+        row:SetPoint("TOPRIGHT", scrollChild, "TOPRIGHT", 0, y)
+        local check = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
+        check:SetPoint("TOPLEFT", row, "TOPLEFT", 2, -2)
+        check:SetChecked(Hunter:IsAspectSuggestionEnabled(aspectKey))
+        local label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+        label:SetPoint("LEFT", check, "RIGHT", 4, 0)
+        label:SetText(Loc(labelKey, fallback))
+        check:SetScript("OnClick", function(self)
+            Hunter:SetAspectSuggestionEnabled(aspectKey, self:GetChecked())
+        end)
+        cardFrames[#cardFrames + 1] = row
+        y = y - 34
+    end
+    scrollChild:SetHeight(math.max(-y, 1))
+end
+
+selectSpec = function(specKey)
     currentSpec = specKey
     for k, b in pairs(tabButtons) do
         local active = (k == currentSpec)
         b.bg:SetVertexColor(active and ORANGE[1] or 0.09, active and ORANGE[2] * 0.45 or 0.09, 0, 1.0)
         b.txt:SetTextColor(active and 1.0 or 0.9, active and 0.9 or 0.9, active and 0.6 or 0.9, 1)
     end
-    layoutSpec()
+    if currentSpec == "EXTRA" then
+        if resetButton then resetButton:Hide() end
+        if hintText then hintText:SetText(Loc("extra_hint", "Aspectos são independentes da rotação. Marque os que deseja receber; as condições de uso são automáticas.")) end
+        layoutExtra()
+    else
+        if resetButton then resetButton:Show() end
+        if hintText then hintText:SetText("Clique para ligar/desligar.") end
+        layoutSpec()
+    end
 end
 
 local function createPanel()
@@ -469,6 +559,7 @@ local function createPanel()
     frame:SetHeight(PANEL_H)
     frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     frame:SetFrameStrata("DIALOG")
+    frame:SetAlpha(0.85)
     frame:SetToplevel(true)
     frame:EnableMouse(true)
     if type(UISpecialFrames) == "table" then tinsert(UISpecialFrames, "CFA_HunterRotationEditor") end
@@ -528,13 +619,18 @@ local function createPanel()
     close:SetScript("OnEnter", function(self) self.txt:SetTextColor(1, 0.45, 0.45, 1) end)
     close:SetScript("OnLeave", function(self) self.txt:SetTextColor(1, 0.25, 0.25, 1) end)
 
-    -- Spec tabs
-    local defs = { { "BM", "Beast Mastery" }, { "MM", "Marksmanship" }, { "SV", "Survival" } }
+    -- Spec tabs and talent-independent extra recommendations
+    local defs = {
+        { "BM", "Beast Mastery", 140 },
+        { "MM", "Marksmanship", 140 },
+        { "SV", "Survival", 140 },
+        { "EXTRA", "Extra", 82 },
+    }
     local sx = 14
     for _, def in ipairs(defs) do
-        local key, label = def[1], def[2]
+        local key, label, width = def[1], def[2], def[3]
         local b = CreateFrame("Button", nil, frame)
-        b:SetWidth(140)
+        b:SetWidth(width)
         b:SetHeight(30)
         b:SetPoint("TOPLEFT", frame, "TOPLEFT", sx, -40)
         b.bg = b:CreateTexture(nil, "BACKGROUND")
@@ -546,7 +642,7 @@ local function createPanel()
         b.txt:SetText(label)
         b:SetScript("OnClick", function() selectSpec(key) end)
         tabButtons[key] = b
-        sx = sx + 148
+        sx = sx + width + 8
     end
 
     local scrollFrame = CreateFrame("ScrollFrame", "CFA_HunterRotationEditorScroll", frame, "UIPanelScrollFrameTemplate")
@@ -557,21 +653,21 @@ local function createPanel()
     scrollChild:SetHeight(400)
     scrollFrame:SetScrollChild(scrollChild)
 
-    local reset = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
-    reset:SetWidth(230)
-    reset:SetHeight(24)
-    reset:SetPoint("BOTTOMLEFT", 14, 12)
-    reset:SetText("Restaurar rotação padrão")
-    reset:SetScript("OnClick", function()
+    resetButton = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+    resetButton:SetWidth(230)
+    resetButton:SetHeight(24)
+    resetButton:SetPoint("BOTTOMLEFT", 14, 12)
+    resetButton:SetText("Restaurar rotação padrão")
+    resetButton:SetScript("OnClick", function()
         if module.ResetRotationOverrides then
             module:ResetRotationOverrides(currentSpec)
         end
         selectSpec(currentSpec)
     end)
 
-    local hint = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    hint:SetPoint("BOTTOMRIGHT", -14, 16)
-    hint:SetText("Clique para ligar/desligar.")
+    hintText = frame:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    hintText:SetPoint("BOTTOMRIGHT", -14, 16)
+    hintText:SetText("Clique para ligar/desligar.")
 
     local det = Hunter.DetectSpec and Hunter:DetectSpec()
     if det and Hunter.RotationSpecs[det] then currentSpec = det else currentSpec = "SV" end

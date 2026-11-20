@@ -39,6 +39,7 @@ local BUTTON_PATTERNS = {
 }
 
 local buttonMap = {}
+local itemButtonMap
 local highlighted = {}
 local mapDirty = true
 
@@ -53,6 +54,12 @@ local function iterActionButtons(fn)
 end
 
 local function slotSpellID(frameBtn)
+    if frameBtn and type(frameBtn.GetAttribute) == "function" then
+        local ok, slot = pcall(function()
+            return tonumber(frameBtn:GetAttribute("action"))
+        end)
+        if ok and slot and slot > 0 then return slot end
+    end
     local name = frameBtn:GetName()
     local n = name and name:match("(%d+)$")
     if not n then return nil end
@@ -67,26 +74,45 @@ end
 
 function Visuals.RefreshMap()
     mapDirty = true
+    itemButtonMap = nil
 end
 
 function Visuals.BuildMap()
     buttonMap = {}
     iterActionButtons(function(f) table.insert(buttonMap, f) end)
     mapDirty = false
+    itemButtonMap = nil
 end
 
 local function ensureMap()
     if mapDirty then Visuals.BuildMap() end
 end
 
-local function buttonSpellID(f)
+local function buttonAction(f)
     local slot = slotSpellID(f)
-    if slot then
-        local actionType, id = GetActionInfo(slot)
-        if actionType == "spell" and id then
-            return id
-        end
+    if not slot or type(GetActionInfo) ~= "function" then return nil end
+    local ok, actionType, id = pcall(GetActionInfo, slot)
+    if not ok then return nil end
+    return actionType, id
+end
+
+local function buttonSpellID(f)
+    local actionType, id = buttonAction(f)
+    if actionType == "spell" then return id end
+    return nil
+end
+
+local function actionItemID(id)
+    if type(id) == "number" then return id end
+    if type(id) == "string" then
+        return tonumber(id:match("item:(%d+)")) or tonumber(id)
     end
+    return nil
+end
+
+local function buttonItemID(f)
+    local actionType, id = buttonAction(f)
+    if actionType == "item" then return actionItemID(id) end
     return nil
 end
 
@@ -116,6 +142,21 @@ function Visuals.FindButtons(spellID)
         if spellMatches(barID, spellID) then out[#out + 1] = btn end
     end
     return out
+end
+
+function Visuals.FindItemButtons(itemID)
+    ensureMap()
+    if not itemButtonMap then
+        itemButtonMap = {}
+        for _, btn in ipairs(buttonMap) do
+            local id = buttonItemID(btn)
+            if id then
+                itemButtonMap[id] = itemButtonMap[id] or {}
+                table.insert(itemButtonMap[id], btn)
+            end
+        end
+    end
+    return itemButtonMap[itemID] or {}
 end
 
 -- public so the minimap button (and others) can reuse the same dashed ring
@@ -176,10 +217,7 @@ function Visuals.Clear()
     highlighted = {}
 end
 
-function Visuals.Show(spellID, reason)
-    ensureMap()
-    Visuals.Clear()
-    if not spellID then return end
+local function showButtons(buttons, reason)
     local rgb
     if addon.db.useSingleColor then
         rgb = Visuals.PresetColors[addon.db.singleColorIndex or 2]
@@ -188,8 +226,8 @@ function Visuals.Show(spellID, reason)
     end
     local mode = addon.db.visualMode or "circle"
     local width = math.max(0, math.min(60, tonumber(addon.db.borderWidth) or 12))
-    for _, btn in ipairs(buttonMap) do
-        if spellMatches(buttonSpellID(btn), spellID) then
+    for _, btn in ipairs(buttons) do
+        if not highlighted[btn] then
             local overlay
             if mode == "border" then
                 overlay = makeBorderOverlay(btn, rgb, width)
@@ -200,6 +238,39 @@ function Visuals.Show(spellID, reason)
             highlighted[btn] = overlay
         end
     end
+end
+
+local function showSpell(spellID, reason)
+    if not spellID then return end
+    local buttons = {}
+    for _, btn in ipairs(buttonMap) do
+        if spellMatches(buttonSpellID(btn), spellID) then buttons[#buttons + 1] = btn end
+    end
+    showButtons(buttons, reason)
+end
+
+local function showItem(itemID, reason)
+    if not itemID then return end
+    showButtons(Visuals.FindItemButtons(itemID), reason)
+end
+
+function Visuals.ShowMany(suggestions)
+    ensureMap()
+    Visuals.Clear()
+    if type(suggestions) ~= "table" then return end
+    for _, suggestion in ipairs(suggestions) do
+        if type(suggestion) == "table" then
+            if suggestion.kind == "item" then
+                showItem(suggestion.itemID, suggestion.color or suggestion.reason)
+            else
+                showSpell(suggestion.spellID, suggestion.color or suggestion.reason)
+            end
+        end
+    end
+end
+
+function Visuals.Show(spellID, reason)
+    Visuals.ShowMany({ { spellID = spellID, color = reason } })
 end
 
 function Visuals.Hide()

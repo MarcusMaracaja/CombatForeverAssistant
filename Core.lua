@@ -170,6 +170,57 @@ frame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
 frame:RegisterEvent("START_AUTOREPEAT_SPELL")
 frame:RegisterEvent("STOP_AUTOREPEAT_SPELL")
 
+local lastEquipmentErrorPrint = 0
+local function updateSuggestionDisplay(suggestion, module)
+    local suggestions = {}
+    if type(suggestion) == "table" then
+        suggestions[#suggestions + 1] = suggestion
+        if type(suggestion.additional) == "table" then
+            for _, extra in ipairs(suggestion.additional) do
+                suggestions[#suggestions + 1] = extra
+            end
+        end
+    end
+    if addon.Equipment and type(addon.Equipment.GetSuggestions) == "function" then
+        local ok, extras = pcall(addon.Equipment.GetSuggestions, module)
+        if ok and type(extras) == "table" then
+            for _, extra in ipairs(extras) do suggestions[#suggestions + 1] = extra end
+        elseif not ok then
+            local now = GetTime()
+            addon.lastError = tostring(extras)
+            if now - lastEquipmentErrorPrint > 10 then
+                lastEquipmentErrorPrint = now
+                print("[CFA] Equipment recommendation error: " .. tostring(extras))
+            end
+        else
+            local now = GetTime()
+            addon.lastError = "Equipment.GetSuggestions must return a table"
+            if now - lastEquipmentErrorPrint > 10 then
+                lastEquipmentErrorPrint = now
+                print("[CFA] Equipment recommendation error: expected a table of suggestions")
+            end
+        end
+    end
+    if addon.Visuals then
+        if #suggestions > 0 and addon.Visuals.ShowMany then
+            addon.Visuals.ShowMany(suggestions)
+        elseif suggestion and suggestion.spellID then
+            addon.Visuals.Show(suggestion.spellID, suggestion.color or "Utility")
+        else
+            addon.Visuals.Hide()
+        end
+    end
+    if addon.KeyButton then
+        if suggestion and suggestion.spellID and addon.db.keyButton then
+            addon.KeyButton.ShowFor(suggestion.spellID)
+        elseif addon.db.keyButton and addon.db.keyButtonAlways then
+            addon.KeyButton.ShowPlaceholder()
+        else
+            addon.KeyButton.Hide()
+        end
+    end
+end
+
 frame:SetScript("OnUpdate", function(_, delta)
     elapsed = elapsed + delta
     if elapsed < TICK then return end
@@ -180,7 +231,6 @@ frame:SetScript("OnUpdate", function(_, delta)
         pcall(addon.PrintWelcome, addon)
     end
     local mod = addon.activeModule
-    if not mod or not mod.GetSuggestion then return end
     -- Test-flash (icon click in the editor / /cfa test) wins over the rotation
     if addon.Visuals and addon.Visuals.flashSpell and GetTime() < (addon.Visuals.flashUntil or 0) then
         addon.Visuals.Show(addon.Visuals.flashSpell, addon.Visuals.flashColor or "Utility")
@@ -192,6 +242,10 @@ frame:SetScript("OnUpdate", function(_, delta)
         if addon.KeyButton then
             if addon.db.keyButtonAlways then addon.KeyButton.ShowPlaceholder() else addon.KeyButton.Hide() end
         end
+    end
+    if not mod or not mod.GetSuggestion then
+        updateSuggestionDisplay(nil, mod)
+        return
     end
     local ok, suggestion = pcall(mod.GetSuggestion, mod)
     if addon.debugMode then
@@ -213,22 +267,7 @@ frame:SetScript("OnUpdate", function(_, delta)
         end
         return
     end
-    if addon.Visuals then
-        if suggestion then
-            addon.Visuals.Show(suggestion.spellID, suggestion.color or "Utility")
-        else
-            addon.Visuals.Hide()
-        end
-    end
-    if addon.KeyButton then
-        if suggestion and addon.db.keyButton then
-            addon.KeyButton.ShowFor(suggestion.spellID)
-        elseif addon.db.keyButton and addon.db.keyButtonAlways then
-            addon.KeyButton.ShowPlaceholder()
-        else
-            addon.KeyButton.Hide()
-        end
-    end
+    updateSuggestionDisplay(suggestion, mod)
 end)
 
 -- ---------------------------------------------------------------------------
@@ -615,6 +654,19 @@ function addon.NodeFilterPass(env, filter)
         end
     end
     return true
+end
+
+function addon.NodeConditionPass(module, env, node, strict)
+    if type(node) ~= "table" or not addon.NodeFilterPass(env, node.filter) then return false end
+    local condition = node.condition
+    if not condition or condition == "" then return true end
+    local predicates = type(module) == "table" and module.RotationPredicates or nil
+    local predicate = type(predicates) == "table" and predicates[condition] or nil
+    if type(predicate) ~= "table" or type(predicate.fn) ~= "function" then
+        return not strict
+    end
+    local ok, result = pcall(predicate.fn, env)
+    return ok and result and true or false
 end
 
 -- ---------------------------------------------------------------------------
@@ -1439,33 +1491,20 @@ function addon:RunDeclaredRotation(module, specKey, env)
     local nodes = (type(module.GetEffectiveNodes) == "function" and module:GetEffectiveNodes(specKey)) or spec.nodes
     if type(nodes) ~= "table" then return false end
     local disabled = (type(module.GetRotationDisabled) == "function" and module.GetRotationDisabled(specKey)) or nil
-    local preds = type(module.RotationPredicates) == "table" and module.RotationPredicates or {}
     for _, node in ipairs(nodes) do
         if node.enabled ~= false and not (disabled and disabled[node.id]) then
-            if addon.NodeFilterPass(env, node.filter) then
-                local pass = true
-                local cond = node.condition
-                if cond and cond ~= "" then
-                    local p = preds[cond]
-                    if type(p) == "table" and type(p.fn) == "function" then
-                        local ok, r = pcall(p.fn, env)
-                        pass = ok and r and true or false
-                    else
-                        pass = true
-                    end
-                end
+            local pass = addon.NodeConditionPass(module, env, node)
+            if pass then
                 if addon.debugMode then
-                    addon:DebugPrint("nó", tostring(node.id), "cond=" .. tostring(cond),
-                        "condOK=" .. tostring(pass), "enabled=ok")
+                    addon:DebugPrint("nó", tostring(node.id), "cond=" .. tostring(node.condition),
+                        "condOK=true", "enabled=ok")
                 end
-                if pass then
-                    local knownID = addon.Compat.HighestKnownSpellID(node.spellID) or node.spellID
-                    if module:TryFlash(knownID, node.color, function() return true end, node.name, env, node.opts) then
-                        if addon.debugMode then
-                            addon:DebugPrint("   -> SUGERIDO", tostring(node.id), tostring(knownID))
-                        end
-                        if not node.passthrough then return true end
+                local knownID = addon.Compat.HighestKnownSpellID(node.spellID) or node.spellID
+                if module:TryFlash(knownID, node.color, function() return true end, node.name, env, node.opts) then
+                    if addon.debugMode then
+                        addon:DebugPrint("   -> SUGERIDO", tostring(node.id), tostring(knownID))
                     end
+                    if not node.passthrough then return true end
                 end
             end
         end

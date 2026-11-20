@@ -24,3 +24,4 @@ Modules\Hunter\Scripts_MM.lua
 Modules\Hunter\Scripts.lua
 Modules\Hunter\RotationEditor.lua
 Modules\Hunter\Options.lua
+Equipment.lua

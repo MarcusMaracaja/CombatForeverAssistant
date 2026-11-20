@@ -44,6 +44,7 @@ local function createPanel()
     frame:SetHeight(PANEL_H)
     frame:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     frame:SetFrameStrata("HIGH")
+    frame:SetAlpha(0.85)
     frame:EnableMouse(true)
     applyBackdrop(frame, BG[1], BG[2], BG[3], BG[4])
     -- belt-and-suspenders: explicit solid background (works even if the
@@ -124,7 +125,9 @@ local function createPanel()
     content:SetPoint("BOTTOMRIGHT", -10, 10)
     frame.content = content
 
-    frame:SetScript("OnHide", function() end)
+    frame:SetScript("OnHide", function()
+        if addon.Hunter and addon.Hunter.HidePicker then addon.Hunter.HidePicker() end
+    end)
     tinsert(UISpecialFrames, "CFA_OptionsFrame")
     return frame
 end
@@ -154,15 +157,22 @@ end
 local function refreshTabButtons()
     local order = { "general", "key" }
     local seen = { general = true, key = true, about = true }
+    local classTabs = {}
+    local _, playerClass = UnitClass("player")
     for id, tab in pairs(tabs) do
-        if not seen[id] then
-            local _, playerClass = UnitClass("player")
-            if not tab.classTag or tab.classTag == playerClass then
-                seen[id] = true
-                table.insert(order, id)
-            end
+        if not seen[id] and id ~= "equipment"
+            and (not tab.classTag or tab.classTag == playerClass) then
+            classTabs[#classTabs + 1] = id
         end
     end
+    table.sort(classTabs, function(a, b)
+        return (tabs[a].title or a) < (tabs[b].title or b)
+    end)
+    for _, id in ipairs(classTabs) do
+        seen[id] = true
+        order[#order + 1] = id
+    end
+    if tabs.equipment then order[#order + 1] = "equipment" end
     table.insert(order, "about")
 
     for i, id in ipairs(order) do
@@ -206,6 +216,7 @@ local function getContentFrame(id)
 end
 
 function Options.SelectTab(id)
+    if addon.Hunter and addon.Hunter.HidePicker then addon.Hunter.HidePicker() end
     currentTab = id
     if not frame then createPanel() end
     for otherId, f in pairs(contentFrames) do f:Hide() end
@@ -635,7 +646,16 @@ function buildAboutTab(parent)
     fs:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -6, -8)
     fs:SetJustifyH("LEFT")
     fs:SetJustifyV("TOP")
-    fs:SetText(L["about_body"])
+    local version = "?"
+    local getMetadata = GetAddOnMetadata
+    if C_AddOns and type(C_AddOns.GetAddOnMetadata) == "function" then
+        getMetadata = C_AddOns.GetAddOnMetadata
+    end
+    if type(getMetadata) == "function" then
+        local ok, value = pcall(getMetadata, addonName, "Version")
+        if ok and type(value) == "string" and value ~= "" then version = value end
+    end
+    fs:SetText(L["about_body"] .. "\n\n" .. L["about_version"] .. ": " .. version)
 end
 
 -- Register built-in tabs eagerly so class modules can rely on Options existing.

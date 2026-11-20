@@ -22,17 +22,19 @@ control.
 
 | Area | State |
 |---|---|
-| Addon loads, `/cfa` menu (General / Key button / About) | Working (tested in game) |
+| Addon loads, `/cfa` menu (General / Key button / Equipment / About) | Working (tested in game); new Equipment tab needs in-game validation |
 | Menu settings persist — fixes the orphan-table bug where changes were written to a table detached from the SV global | Corrected (user-authored fix) — not yet verified in game |
 | Highlight: **circle** or **border** modes | Working (tested in game) |
 | Border width slider (0–60 px), single-color option, per-function colors | Working (tested in game) |
 | Key button (draggable widget showing the bound key, lock option, "always show", 6 fonts, size, background/text color, transparency, reset) | Working (tested in game) |
 | **Buff library** (`CFA.BuffLib`) — all 9 vanilla classes, all ranks, aura/cast IDs, tier tracking | Implemented — **aura reads rewritten to `C_UnitAuras.GetAuraDataByIndex`** (H-0185): `UnitBuff`/`UnitDebuff` don't exist on Forever; **not yet verified in game** |
 | **Hunter class module (SV / BM / MM)** — declarative rotation, spec detection via **C_Traits ordinals** (tested in game: `spec: C_Traits F=0 M=0 S=10`), Castable engine + aura beliefs + persistent aspect belief | Working — **rotation now recommends in game** (H-0196): the castability gate was called with the wrong convention (`self`/`z` mix-up), which silently rejected every combat spell and left only the aspect flashing |
-| **Hunter rotation** — aspects (Cheetah/Hawk/Beast/Monkey/Pack), Hunter's Mark, Concussive Shot, pet management, spec rotation (Aimed Shot / Serpent Sting / Arcane Shot / Multi-Shot / Rapid Fire / Mongoose / Raptor / Disengage), racial, Auto Shot as filler | Baseline verified in game (H-0196/H-0197); H-0204 melee/aspect fixes applied to the selected 19 Nov snapshot, **awaiting in-game revalidation** |
+| **Hunter rotation** — aspects (Cheetah/Hawk/Beast/Monkey/Pack), Hunter's Mark, Concussive Shot, pet management, spec rotation (Aimed Shot / Serpent Sting / Arcane Shot / Multi-Shot / Rapid Fire / Mongoose / Raptor / Disengage), racial, Auto Shot as filler | Working — **verified in game by the user** (H-0196/H-0197); dead zone (5–10 yd) now triggers **Disengage** |
 | **Global racial system** — every race/class combination of WoW Forever (Human, Dwarf, Night Elf, Gnome, Orc, Undead, Tauren, Troll, Skyborne) | Implemented (H-0189/H-0190) — low priority: only suggests when the rotation has nothing else to say |
 | **Debug commands** — `/cfa debug` (on/off + rotation report), `/cfa debug on|off`, `/cfa probe` (client API dump) | Implemented (H-0196) — prints the reason every node was rejected |
-| **Rotation editor window** (per-character node toggles, per-node conditions/filters via 6 cascade axes + special predicates, icon-click flash test, `^`/`v` reorder, BM/MM/SV tabs, reset-to-default) | Implemented — color codes fixed (H-0186/0187) — **not yet verified in game** |
+| **Equipment recommendations** (19 gear slots, select equipped/bag items, per-item conditions, highlights the action-bar item without using/equipping it) | Implemented (H-0208) — **not yet verified in game** |
+| **Rotation editor window** (per-character node toggles, per-node conditions/filters via 6 cascade axes + special predicates, icon-click flash test, `^`/`v` reorder, BM/MM/SV/Extra tabs, reset-to-default) | Implemented — color codes fixed (H-0186/0187) — **not yet verified in game** |
+| **Hunter Extra tab** (per-character toggles for Cheetah, Pack, Monkey, Beast and Hawk suggestions) | Implemented (H-0208) — **not yet verified in game** |
 | Login welcome (spec bless + spec + detection source + race greeting) | Working (tested in game — prints on first tick) |
 | Class modules (Shaman, Warrior, Druid, Paladin) | **Not implemented yet** — next phases |
 
@@ -65,11 +67,21 @@ control.
   dead zone (5–10 yd) is detected (measured distance, or *Atacar* vs *Corte de Asa*
   probes) and Disengage triggers; pet utilities (Mend/Call/Revive Pet) moved **after**
   the spec rotation so they can no longer starve the combat rotation.
-- **H-0202/H-0204 (2026-11-20)** — after the unsupported `PLAYER_TALENT_CHANGED` event
-  blocked module loading, the selected build returned to the 19 Nov Hunter-only snapshot.
-  H-0204 fixes the known-rank usability gate, per-node options, reactive Counterattack,
-  Mongoose/Raptor melee checks, and aspect repetition/PvP gating. **The H-0204 build still
-  needs in-game revalidation.**
+- **H-0208** — Added per-character equipment-item rules and a Hunter **Extra** tab for
+  optional aspect suggestions. Items are only highlighted on the action bar; the player
+  still clicks them normally. Both features need in-game validation.
+- **H-0209** — Guarded optional icon-texture cropping during rotation-card redraws and made
+  the options and Hunter editor windows slightly transparent (85% opacity). Needs in-game
+  validation.
+- **H-0210** — Kept the item/condition picker fully opaque by parenting it to `UIParent`
+  instead of inheriting the options window's alpha; it now closes when the options window
+  closes or changes tabs.
+- **H-0211** — Fixed both rotation reorder buttons: `selectSpec` now assigns to its forward-
+  declared local instead of shadowing it. The buttons need in-game validation.
+- **H-0212** — Fixed rotation skill re-enabling (the Lua `and nil or false` expression always
+  selected `false`) and corrected the Extra checkboxes' colon-method call, which made saved
+  enabled aspects appear unchecked. Extra remains a toggle list: its recommendation conditions
+  are automatic and fixed by the Hunter aspect logic.
 
 > **Saved variables:** settings persist on `/reload` (and on logout/clean exit), like any
 > Blizzard client. An earlier bug made menu changes persist nowhere: `addon.db` was bound
@@ -117,6 +129,19 @@ between **5 and 10 yd**. The addon measures the distance to the target and, when
 client can't report it, compares the *Atacar* action (≤5 yd) with *Wing Clip* (≤10 yd)
 to detect the dead zone — where **Disengage** is the right pick.
 
+### Equipment item suggestions
+
+Open `/cfa` → **Equipment** (above **About**). Choose an item for a gear slot from the
+equipped items and bags, use **[+] / [-]** to add or remove conditions, then place that item
+on an action bar. CFA highlights the matching item action when the conditions pass; clicking
+it remains the game's normal item use. CFA never uses, equips or swaps items automatically.
+Rules are saved per character. Availability depends on the client exposing the item's slot
+metadata, so new/custom items still need a real client test.
+
+The Hunter rotation editor's **Extra** tab lets you enable or disable Cheetah, Pack, Monkey,
+Beast and Hawk suggestions independently of the talent specialization. Other class-specific
+buff controls are not implemented until those class modules return to the build.
+
 ### Highlight modes
 
 - **Circle** — a dashed colored ring around the recommended button (native textures).
@@ -149,17 +174,19 @@ Ele **não** aperta a tecla por você — apenas destaca o botão. Você continu
 
 | Área | Estado |
 |---|---|
-| Addon carrega, menu `/cfa` (Geral / Botão de tecla / Sobre) | Funcionando (testado em jogo) |
+| Addon carrega, menu `/cfa` (Geral / Botão de tecla / Equipamentos / Sobre) | Funcionando (testado em jogo); aba Equipamentos precisa de validação em jogo |
 | Configurações do menu persistem — corrige o bug da tabela órfã (mudanças iam para uma tabela desconectada do global de SV) | Corrigido (correção do usuário) — ainda não verificado em jogo |
 | Destaque: **círculo** ou **moldura** | Funcionando (testado em jogo) |
 | Slider de largura da moldura (0–60 px), cor única, cores por função | Funcionando (testado em jogo) |
 | Botão de tecla (widget arrastável mostrando a tecla, trava, "sempre exibir", 6 fontes, tamanho, cor de fundo/texto, transparência, restaurar padrões) | Funcionando (testado em jogo) |
 | **Biblioteca de buffs** (`CFA.BuffLib`) — as 9 classes vanilla, todos os ranks, IDs de aura/cast, tiers, aviso de buff desatualizado | Implementada — **leitura de auras reescrita para `C_UnitAuras.GetAuraDataByIndex`** (H-0185): `UnitBuff`/`UnitDebuff` não existem no Forever; **ainda não verificada em jogo** |
 | **Módulo Hunter (SV / BM / MM)** — rotação declarativa, detecção de spec via **ordinals de `treeIDs` do C_Traits** (testada em jogo: `spec: C_Traits F=0 M=0 S=10`), engine de Castable + crenças de aura + crença de aspecto persistente | Funcionando — **a rotação agora recomenda em jogo** (H-0196): o gate de castabilidade era chamado com a convenção errada (`self`/`z` trocados), recusando silenciosamente todas as spells de combate e deixando só o aspecto piscar |
-| **Rotação do Hunter** — aspectos (Guepardo/Falcão/Fera/Macaco/Matilha), Marca do Caçador, Tiro Concussivo, gestão do pet, rotação da spec (Disparo Preciso / Mordida de Serpente / Disparo Arcano / Disparo Múltiplo / Disparo Rápido / Mordida de Mongoose / Golpe de Raptor / Fuga), racial e Tiro Automático como filler | Base verificada em jogo (H-0196/H-0197); correções melee/aspectos H-0204 aplicadas ao snapshot escolhido de 19/11, **aguardando revalidação em jogo** |
+| **Rotação do Hunter** — aspectos (Guepardo/Falcão/Fera/Macaco/Matilha), Marca do Caçador, Tiro Concussivo, gestão do pet, rotação da spec (Disparo Preciso / Mordida de Serpente / Disparo Arcano / Disparo Múltiplo / Disparo Rápido / Mordida de Mongoose / Golpe de Raptor / Fuga), racial e Tiro Automático como filler | Funcionando — **verificado em jogo pelo usuário** (H-0196/H-0197); a zona morta (5–10 yd) agora dispara o **Fuga (Disengage)** |
 | **Sistema global de raciais** — todas as combinações de raça/classe do WoW Forever (Humano, Anão, Elfo Noturno, Gnomo, Orc, Morto-vivo, Tauren, Troll, Skyborne) | Implementado (H-0189/H-0190) — baixa prioridade: só sugere quando a rotação não tem nada a dizer |
 | **Comandos de debug** — `/cfa debug` (liga/desliga + relatório da rotação), `/cfa debug on|off`, `/cfa probe` (dump das APIs do cliente) | Implementado (H-0196) — mostra o motivo de cada nó recusado |
-| **Janela de edição de rotação** (liga/desliga nós por personagem, condições/filtros por nó via 6 eixos de filtro + predicados especiais, clique no ícone para testar o flash, `^`/`v` reordenar, abas BM/MM/SV, restaurar padrão) | Implementada — códigos de cor corrigidos (H-0186/0187) — **ainda não verificada em jogo** |
+| **Recomendações de itens de equipamento** (19 slots, seleção de itens equipados/bolsas, condições por item, destaca o item na barra sem usá-lo/equipá-lo) | Implementadas (H-0208) — **ainda não verificadas em jogo** |
+| **Janela de edição de rotação** (liga/desliga nós por personagem, condições/filtros por nó via 6 eixos de filtro + predicados especiais, clique no ícone para testar o flash, `^`/`v` reordenar, abas BM/MM/SV/Extra, restaurar padrão) | Implementada — códigos de cor corrigidos (H-0186/0187) — **ainda não verificada em jogo** |
+| **Aba Extra do Hunter** (liga/desliga por personagem as recomendações de Guepardo, Matilha, Macaco, Fera e Falcão) | Implementada (H-0208) — **ainda não verificada em jogo** |
 | Boas-vindas no login (bênção da spec + spec + origem da detecção + saudação racial) | Funcionando (testada em jogo — imprime no primeiro tick) |
 | Módulos de classe (Shaman, Warrior, Druid, Paladin) | **Ainda não implementados** — próximas fases |
 
@@ -191,11 +218,19 @@ Ele **não** aperta a tecla por você — apenas destaca o botão. Você continu
   detectada (distância medida, ou sondagem *Atacar* × *Corte de Asa*) e o Fuga dispara; as utilidades
   de pet (Curar/Chamar/Reviver Ajudante) passaram para **depois** da rotação da spec, para não
   mais bloquearem as habilidades de combate.
-- **H-0202/H-0204 (2026-11-20)** — após o evento desconhecido `PLAYER_TALENT_CHANGED` impedir o
-  carregamento do módulo, foi escolhido o snapshot Hunter-only de 19/11. H-0204 corrige o gate
-  de usabilidade pelo rank conhecido, as opções por nó, o Contra-ataque reativo, o melee real de
-  Mangusto/Raptor e a repetição/filtro PvP dos aspectos. **A versão H-0204 ainda precisa ser
-  revalidada em jogo.**
+- **H-0208** — Adicionadas regras por personagem para itens de equipamento e uma aba **Extra** do
+  Hunter para controlar recomendações de aspectos. O addon apenas destaca o item na barra; não o
+  usa, equipa nem troca automaticamente. As duas funções ainda precisam ser testadas em jogo.
+- **H-0209** — Protegido o recorte opcional das texturas dos ícones ao redesenhar os cards e
+  aplicada transparência leve (85% de opacidade) às janelas de opções e do editor Hunter. Precisa
+  de validação em jogo.
+- **H-0210** — O seletor de itens/condições agora fica opaco, sem herdar a transparência da janela
+  principal, e fecha ao fechar a janela ou trocar de aba.
+- **H-0211** — Corrigidas as duas setas da rotação: `selectSpec` agora preenche a variável local
+  declarada antecipadamente, sem sombreá-la. Os botões ainda precisam de validação em jogo.
+- **H-0212** — Corrigido o re-ligar de habilidades (a expressão Lua `and nil or false` sempre
+  resultava em `false`) e a chamada por ponto na aba Extra, que mostrava os aspectos ativos como
+  desmarcados. Extra continua sendo uma lista de ativação: as condições dos aspectos são automáticas.
 
 > **Variáveis salvas:** as configurações persistem no `/reload` (e no logout/saída limpa),
 > como em qualquer cliente Blizzard. Um bug anterior fazia as mudanças sumirem: `addon.db`
@@ -243,6 +278,21 @@ Em WotLK as habilidades corpo a corpo do caçador precisam de **5 yd** e as de l
 alcance param de funcionar entre **5 e 10 yd**. O addon mede a distância do alvo e,
 quando o cliente não consegue informar, compara a ação *Atacar* (≤5 yd) com o *Corte de
 Asa* (≤10 yd) para detectar a zona morta — onde o **Fuga** é a habilidade certa.
+
+### Recomendações de itens de equipamento
+
+Abra `/cfa` → **Equipamentos** (acima de **Sobre**). Escolha um item daquele slot entre os itens
+equipados e das bolsas, use **[+] / [-]** para adicionar ou remover condições e coloque o item em
+uma barra de ações. O CFA destaca a ação do item quando as condições são satisfeitas; clicar nela
+continua usando o item normalmente pelo jogo. O CFA não usa, equipa ou troca itens automaticamente.
+As regras são salvas por personagem. Itens novos/customizados dependem de o cliente fornecer os
+metadados do slot, então ainda precisam de teste real.
+
+Na aba **Extra** do editor de rotação Hunter, é possível ativar ou desativar independentemente da
+especialização as recomendações de Guepardo, Matilha, Macaco, Fera e Falcão. Essa aba não usa cards
+com condições editáveis: aspectos são avaliados pela lógica global do Hunter, com regras automáticas
+de grupo/combate/alvo. Controles de buffs específicos de outras classes ficam pendentes até esses
+módulos voltarem ao build.
 
 ### Modos de destaque
 

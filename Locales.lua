@@ -17,6 +17,7 @@ local strings = {
     -- Options: window
     ["opt_title"]               = { en = "Combat Forever Assistant", pt = "Combat Forever Assistant" },
     ["opt_tab_general"]         = { en = "General", pt = "Geral" },
+    ["opt_tab_equipment"]        = { en = "Equipment", pt = "Equipamentos" },
     ["opt_tab_about"]           = { en = "About", pt = "Sobre" },
 
     -- Options: general section
@@ -54,7 +55,41 @@ local strings = {
     ["minimap_hidden"]          = { en = "Minimap button hidden.", pt = "Botao do minimapa oculto." },
 
     -- About
-    ["about_body"]              = { en = "Combat Forever Assistant highlights the ability you should press next, based on your spec, talents, target, mana, range and combat state.\n\nIt never presses keys or casts for you.\n\nModules: Hunter, Shaman, Warrior, Druid, Paladin.\n\nCreated by Marcus, with Inkling 2 Small Free (OpenCode) as technology partner.", pt = "O Combat Forever Assistant destaca (/cfa) a habilidade que voce deveria usar a seguir, com base na spec, talentos, alvo, mana, alcance e estado de combate.\n\nEle nunca aperta a tecla nem conjura por voce.\n\nModulos: Hunter, Shaman, Warrior, Druid, Paladin.\n\nCriado por Marcus, com Inkling 2 Small Free (OpenCode) como parceiro de tecnologia." },
+    ["about_body"]              = { en = "Combat Forever Assistant highlights the ability you should press next, based on your spec, talents, target, mana, range and combat state.\n\nIt never presses keys or casts for you.\n\nAvailable module: Hunter.\n\nCreated by Marcus, with Inkling 2 Small Free (OpenCode) as technology partner.", pt = "O Combat Forever Assistant destaca (/cfa) a habilidade que voce deveria usar a seguir, com base na spec, talentos, alvo, mana, alcance e estado de combate.\n\nEle nunca aperta a tecla nem conjura por voce.\n\nModulo disponivel: Hunter.\n\nCriado por Marcus, com Inkling 2 Small Free (OpenCode) como parceiro de tecnologia." },
+    ["about_version"]           = { en = "Version", pt = "Versao" },
+
+    -- Equipment recommendations
+    ["equip_hint"]              = { en = "Choose an item for each slot, add conditions, then place that item on your action bar. CFA only highlights it.", pt = "Escolha um item por slot, adicione condicoes e coloque o item na barra. O CFA apenas destaca o botao." },
+    ["equip_select_item"]       = { en = "Select item", pt = "Selecionar item" },
+    ["equip_no_item"]           = { en = "(no item selected)", pt = "(nenhum item selecionado)" },
+    ["equip_no_items"]          = { en = "No matching items found in equipment or bags.", pt = "Nenhum item compativel encontrado no equipamento ou nas bolsas." },
+    ["equip_slot_head"]         = { en = "Head", pt = "Cabeca" },
+    ["equip_slot_neck"]         = { en = "Neck", pt = "Pescoco" },
+    ["equip_slot_shoulder"]     = { en = "Shoulders", pt = "Ombros" },
+    ["equip_slot_shirt"]        = { en = "Shirt", pt = "Camisa" },
+    ["equip_slot_chest"]        = { en = "Chest", pt = "Torso" },
+    ["equip_slot_waist"]        = { en = "Waist", pt = "Cintura" },
+    ["equip_slot_legs"]         = { en = "Legs", pt = "Pernas" },
+    ["equip_slot_feet"]         = { en = "Feet", pt = "Pes" },
+    ["equip_slot_wrist"]        = { en = "Wrist", pt = "Pulsos" },
+    ["equip_slot_hands"]        = { en = "Hands", pt = "Maos" },
+    ["equip_slot_finger0"]      = { en = "Ring 1", pt = "Anel 1" },
+    ["equip_slot_finger1"]      = { en = "Ring 2", pt = "Anel 2" },
+    ["equip_slot_trinket0"]     = { en = "Trinket 1", pt = "Berloque 1" },
+    ["equip_slot_trinket1"]     = { en = "Trinket 2", pt = "Berloque 2" },
+    ["equip_slot_back"]         = { en = "Back", pt = "Costas" },
+    ["equip_slot_mainhand"]     = { en = "Main hand", pt = "Mao principal" },
+    ["equip_slot_offhand"]      = { en = "Off hand", pt = "Mao secundaria" },
+    ["equip_slot_ranged"]       = { en = "Ranged", pt = "A distancia" },
+    ["equip_slot_tabard"]       = { en = "Tabard", pt = "Tabardo" },
+
+    -- Talent-independent Hunter recommendations
+    ["extra_hint"]              = { en = "Aspects are separate from the rotation. Enable the ones CFA should recommend; usage conditions are automatic.", pt = "Aspectos sao independentes da rotacao. Ative os que deseja receber; as condicoes de uso sao automaticas." },
+    ["extra_aspect_cheetah"]    = { en = "Aspect of the Cheetah", pt = "Aspecto do Guepardo" },
+    ["extra_aspect_pack"]       = { en = "Aspect of the Pack", pt = "Aspecto da Matilha" },
+    ["extra_aspect_monkey"]     = { en = "Aspect of the Monkey", pt = "Aspecto do Macaco" },
+    ["extra_aspect_beast"]      = { en = "Aspect of the Beast", pt = "Aspecto da Fera" },
+    ["extra_aspect_hawk"]       = { en = "Aspect of the Hawk", pt = "Aspecto do Falcao" },
 
     ["rotation_error"]          = { en = "[CFA] Rotation error (see /cfa status): %s", pt = "[CFA] Erro na rotação (veja /cfa status): %s" },
 

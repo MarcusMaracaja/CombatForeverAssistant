@@ -377,6 +377,13 @@ local function isPvPEnvironment(env)
     return false
 end
 
+local function unitIsSame(unit, other)
+    if type(UnitIsUnit) ~= "function" then return false end
+    local ok, same = pcall(UnitIsUnit, unit, other)
+    if not ok or (_G.issecretvalue and issecretvalue(same)) then return false end
+    return same == true
+end
+
 -- ---------------------------------------------------------------------------
 -- Aspects (global management): manter a sugestão elegível até o aspecto ser
 -- ativado. O loop de rotação roda a cada 0,2 s; ticks não são tentativas do jogador.
@@ -398,12 +405,37 @@ local function aspectCastable(id)
 end
 
 local function suggestAspect(id, color, label)
-    if module.TickFlashUsed then return nil end
     local ok, knownID, reason = aspectCastable(id)
     addon:DebugPrint("aspecto", label, "castable=", tostring(ok), "motivo=", tostring(reason))
     if not ok then return nil end
-    if module:Suggest(knownID, color) then return true end
-    return nil
+    return { spellID = knownID, color = color }
+end
+
+local ASPECT_SUGGESTIONS = {
+    Cheetah = true,
+    Pack = true,
+    Monkey = true,
+    Beast = true,
+    Hawk = true,
+}
+
+function module:IsAspectSuggestionEnabled(key)
+    if not ASPECT_SUGGESTIONS[key] then return false end
+    local settings = module.charDb and module.charDb.hunterAspectSuggestions
+    return type(settings) ~= "table" or settings[key] ~= false
+end
+
+function module:SetAspectSuggestionEnabled(key, enabled)
+    if not ASPECT_SUGGESTIONS[key] or not module.charDb then return false end
+    module.charDb.hunterAspectSuggestions = module.charDb.hunterAspectSuggestions or {}
+    local settings = module.charDb.hunterAspectSuggestions
+    if enabled then
+        settings[key] = nil
+        if not next(settings) then module.charDb.hunterAspectSuggestions = nil end
+    else
+        settings[key] = false
+    end
+    return true
 end
 
 function module:ManageAspects(env)
@@ -413,11 +445,11 @@ function module:ManageAspects(env)
             local numParty = groupCount(GetNumPartyMembers)
             local numRaid = groupCount(GetNumRaidMembers)
             if numParty > 0 or numRaid > 1 then
-                if not module.IsAspectOfPackActive() then
+                if module:IsAspectSuggestionEnabled("Pack") and not module.IsAspectOfPackActive() then
                     return suggestAspect(13159, "Utility", "Pack")
                 end
             else
-                if not module.IsAspectOfCheetahActive() then
+                if module:IsAspectSuggestionEnabled("Cheetah") and not module.IsAspectOfCheetahActive() then
                     return suggestAspect(5118, "Utility", "Cheetah")
                 end
             end
@@ -426,13 +458,13 @@ function module:ManageAspects(env)
     end
     -- In combat, melee: Beast/Monkey; ranged: Hawk (damage aspect)
     if env.tooCloseForRanged then
-        local beingFocused = (type(UnitIsUnit) == "function" and UnitIsUnit("targettarget", "player"))
+        local beingFocused = unitIsSame("targettarget", "player")
         if beingFocused then
-            if not module.IsAspectOfMonkeyActive() then
+            if module:IsAspectSuggestionEnabled("Monkey") and not module.IsAspectOfMonkeyActive() then
                 return suggestAspect(13163, "Utility", "Monkey")
             end
         else
-            if not module.IsAspectOfBeastActive() then
+            if module:IsAspectSuggestionEnabled("Beast") and not module.IsAspectOfBeastActive() then
                 return suggestAspect(13161, "Utility", "Beast")
             end
         end
@@ -440,7 +472,7 @@ function module:ManageAspects(env)
     end
     local dangerousAspect = module.IsAspectOfCheetahActive() or module.IsAspectOfPackActive()
     if not env.tooCloseForRanged and (env.manaPct > 70 or not module.IsAspectActive() or dangerousAspect) then
-        if not module.IsAspectOfHawkActive() then
+        if module:IsAspectSuggestionEnabled("Hawk") and not module.IsAspectOfHawkActive() then
             return suggestAspect(13165, "Utility", "Hawk")
         end
     end
@@ -587,12 +619,18 @@ end
 -- ---------------------------------------------------------------------------
 module.TickFlashUsed = nil
 module.PendingSuggestion = nil
+module.PendingAspectSuggestion = nil
 
 function module:Suggest(spellID, color)
     if module.TickFlashUsed then return false end
     module.TickFlashUsed = true
     local knownID = module.Compat and module.Compat.HighestKnownSpellID and module.Compat.HighestKnownSpellID(spellID) or spellID
-    module.PendingSuggestion = { spellID = knownID or spellID, color = color or "Utility" }
+    local suggestion = { spellID = knownID or spellID, color = color or "Utility" }
+    local aspect = module.PendingAspectSuggestion
+    if aspect and aspect.spellID ~= suggestion.spellID then
+        suggestion.additional = { aspect }
+    end
+    module.PendingSuggestion = suggestion
     return true
 end
 
@@ -639,6 +677,7 @@ function module:GetSuggestion()
     if module.db and module.db.hunterEnabled == false then return nil end
     module.TickFlashUsed = nil
     module.PendingSuggestion = nil
+    module.PendingAspectSuggestion = nil
     pcall(module.HookActionButtonPress)
     if IsMounted and IsMounted() then
         addon:DebugPrint("GetSuggestion: montado — nada sugerido")
@@ -656,8 +695,8 @@ function module:GetSuggestion()
         tostring(env.tooCloseForRanged), tostring(env.targetDistance), tostring(env.isAoE),
         tostring(env.myHP), tostring(env.manaPct), tostring(env.petAlive), tostring(addon.AutoShoot)))
 
-    -- Pending suggestion from aspects/pet/etc. wins for this tick.
-    if self:ManageAspects(env) then return module.PendingSuggestion end
+    -- Aspect is a parallel hint; keep evaluating the combat rotation this tick.
+    module.PendingAspectSuggestion = self:ManageAspects(env)
 
     -- Hunter's Mark
     if env.hasActiveEnemy and not module.IsMarkedByUs() and not module.IsMarked("target") then
@@ -668,7 +707,7 @@ function module:GetSuggestion()
 
     -- Concussive Shot (PvP control / PvE aggro)
     if env.hasActiveEnemy and not env.isMelee and not module.IsClipped("target") then
-        local beingFocused = type(UnitIsUnit) == "function" and UnitIsUnit("targettarget", "player")
+        local beingFocused = unitIsSame("targettarget", "player")
         if env.isPvP or (env.inCombat and (beingFocused or not UnitExists("targettarget"))) then
             if module:TryFlash(5116, "Interrupt", function() return true end, "Concussive Shot", env) then
                 return module.PendingSuggestion
@@ -723,7 +762,7 @@ function module:GetSuggestion()
         and not module:IsPressSuppressed(module.SpellName(75)) then
         if module:Suggest(75, "Damage") then return module.PendingSuggestion end
     end
-    return nil
+    return module.PendingSuggestion or module.PendingAspectSuggestion
 end
 
 -- ---------------------------------------------------------------------------
