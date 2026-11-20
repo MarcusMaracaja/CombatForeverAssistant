@@ -57,24 +57,10 @@ local function BuildHunterTab(parent)
     radio("Survival", "SV")
 
     y = y - 8
-    header("Rotação")
-
-    local openEditor = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
-    openEditor:SetWidth(210)
-    openEditor:SetHeight(24)
-    openEditor:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
-    openEditor:SetText("Abrir editor de rotação")
-    openEditor:SetScript("OnClick", function()
-        if module.OpenRotationEditor then module.OpenRotationEditor() end
+    header(module.L["rotation_editor_header"])
+    module.Options.AddRotationEditorControls(parent, y, function()
+        if type(module.OpenRotationEditor) == "function" then module.OpenRotationEditor() end
     end)
-    y = y - 30
-
-    local hint = parent:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    hint:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
-    hint:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -8, y)
-    hint:SetJustifyH("LEFT")
-    hint:SetWordWrap(true)
-    hint:SetText("O editor mostra as habilidades da rotação da spec e permite ligar/desligar cada uma (por personagem).")
 end
 
 if module.Options and module.Options.RegisterTab then

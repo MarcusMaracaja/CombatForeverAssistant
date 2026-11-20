@@ -206,7 +206,7 @@ end
 
 -- Aura API readable? (outside combat yes; in combat the whole payload is secret)
 function module.AspectAuraReadable()
-    if not BuffLib or not BuffLib.Status then return true end
+    if not BuffLib or not BuffLib.Status then return false end
     local st = BuffLib:Status("player", "AspectOfTheHawk")
     return st and st.readable and true or false
 end
@@ -216,24 +216,36 @@ local function stripAspectName(n)
     return n:lower():gsub("%s*%b()%s*$", "")
 end
 
+local function matchesAspectBelief(belief, id, base)
+    if type(belief) ~= "table" then return false end
+    return belief.id == id or (base ~= "" and stripAspectName(belief.name) == base)
+end
+
 -- Aspect semantics (igual ao SFF — SpellFlash_Hunter/Functions.lua IsAspectIDActive):
 --  1) aura do jogador — por NOME LOCALIZADO (funciona em ptBR) e por spellID;
 --  2) BuffLib por família/aura ID;
 --  3) crença do nosso próprio cast (sessão) — auras são secret em combate;
 --  4) crença persistente por personagem (aspectos não expiram sozinhos).
--- IMPORTANTE: a crença NUNCA é ignorada. Antes, fora de combate (API legível)
--- o CFA descartava a crença e, como o BuffLib casa por nome em inglês, o
--- Aspecto do Guepardo ficava "sempre inativo" -> sugeria eternamente e
--- travava a rotação antes dela começar.
+-- Crenças só substituem auras quando a leitura está indisponível; uma leitura
+-- completa permite detectar um aspecto cancelado manualmente.
 local function aspectActive(family, id)
     local name = module.SpellName(id)
     local base = stripAspectName(name)
     if module.HasBuff("player", id) then return true end
     if module.HasFamilyBuff("player", family) then return true end
     local b = module.AspectBelief
-    if b and b.active and (b.id == id or stripAspectName(b.name) == base) then return true end
     local cb = module.charDb and module.charDb.aspectBelief
-    if cb and (cb.id == id or stripAspectName(cb.name) == base) then return true end
+    local matchesBelief = (b and b.active and matchesAspectBelief(b, id, base))
+        or matchesAspectBelief(cb, id, base)
+    if module.AspectAuraReadable and module.AspectAuraReadable() then
+        if matchesBelief then
+            module.AspectBelief = nil
+            if module.charDb then module.charDb.aspectBelief = nil end
+        end
+        return false
+    end
+    if b and b.active and matchesAspectBelief(b, id, base) then return true end
+    if matchesAspectBelief(cb, id, base) then return true end
     return false
 end
 

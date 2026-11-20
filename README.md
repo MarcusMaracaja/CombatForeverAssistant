@@ -101,6 +101,13 @@ control.
   cooldowned spells before both highlights and key-button recommendations. Needs in-game testing.
 - **H-0220** — Left-aligned checkbox and highlight-mode labels so they remain visually attached
   to their controls when the options window is resized.
+- **H-0221** — Added a shared per-class rotation editor for Shaman and future modules, with
+  per-character enable/disable and priority ordering.
+- **H-0222** — Fixed Hunter cooldown false positives: unreadable timing no longer blocks all
+  spells, start-recovery timing is not treated as a spell cooldown, and saved aspect beliefs
+  are reconciled whenever aura data is readable. Needs in-game validation.
+- **H-0223** — Integrated SmartTabTarget as a **Tab Assistant** page in the CFA menu, with
+  independent PvP-only TAB and SHIFT+TAB checkboxes and an in-game status/explanation.
 
 > **Saved variables:** settings persist on `/reload` (and on logout/clean exit), like any
 > Blizzard client. An earlier bug made menu changes persist nowhere: `addon.db` was bound
@@ -279,6 +286,13 @@ Ele **não** aperta a tecla por você — apenas destaca o botão. Você continu
   são removidas antes do destaque e da recomendação de tecla. Precisa de teste em jogo.
 - **H-0220** — Alinhados à esquerda os rótulos das caixas de seleção e das opções de moldura,
   mantendo-os junto aos controles ao redimensionar a janela.
+- **H-0221** — Adicionado um editor de rotação compartilhado por classe, com ativação,
+  desativação e ordenação de habilidades salvas por personagem.
+- **H-0222** — Corrigidos falsos positivos de cooldown no Hunter: tempos ilegíveis não bloqueiam
+  todas as habilidades, a recuperação inicial não é confundida com CD da spell e crenças de
+  aspecto são reconciliadas quando as auras podem ser lidas. Precisa de validação em jogo.
+- **H-0223** — Integrado o SmartTabTarget ao menu do CFA como **Tab Assistant**, com caixas
+  independentes para TAB e SHIFT+TAB em PvP, status e explicação dentro da aba.
 
 > **Variáveis salvas:** as configurações persistem no `/reload` (e no logout/saída limpa),
 > como em qualquer cliente Blizzard. Um bug anterior fazia as mudanças sumirem: `addon.db`

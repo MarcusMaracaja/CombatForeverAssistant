@@ -220,6 +220,10 @@ end
 local function refreshTabButtons()
     local order = { "general", "key" }
     local seen = { general = true, key = true, about = true }
+    if tabs.assist then
+        order[#order + 1] = "assist"
+        seen.assist = true
+    end
     local classTabs = {}
     local _, playerClass = UnitClass("player")
     for id, tab in pairs(tabs) do
@@ -262,6 +266,60 @@ end
 function Options.RegisterTab(id, title, classTag, buildFunc)
     tabs[id] = { title = title, classTag = classTag, build = buildFunc }
     if frame then Options.SelectTab(currentTab) end
+end
+
+function Options.CreateScrollableTab(parent)
+    local scroll = CreateFrame("ScrollFrame", nil, parent, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", parent, "TOPLEFT", 0, 0)
+    scroll:SetPoint("BOTTOMRIGHT", parent, "BOTTOMRIGHT", 0, 0)
+    scroll:EnableMouseWheel(true)
+
+    local content = CreateFrame("Frame", nil, scroll)
+    content:SetPoint("TOPLEFT", scroll, "TOPLEFT", 0, 0)
+    content:SetSize(CONTENT_W - SCROLLBAR_W - 4, CONTENT_H)
+    scroll:SetScrollChild(content)
+
+    local function updateLayout()
+        local width, height = parent:GetSize()
+        if not width or width < 100 then width = CONTENT_W end
+        if not height or height < 100 then height = CONTENT_H end
+        scroll:SetSize(width, height)
+        content:SetWidth(math.max(100, width - SCROLLBAR_W - 4))
+    end
+    parent:HookScript("OnSizeChanged", updateLayout)
+    parent:HookScript("OnShow", updateLayout)
+    updateLayout()
+    scroll:SetScript("OnMouseWheel", function(self, delta)
+        local current = self:GetVerticalScroll() or 0
+        local maximum = self:GetVerticalScrollRange() or 0
+        self:SetVerticalScroll(math.max(0, math.min(maximum, current - delta * 32)))
+    end)
+    return content, function(height)
+        content:SetHeight(math.max(1, height))
+    end
+end
+
+function Options.AddRotationEditorControls(parent, y, openEditor, hintText)
+    local button = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    button:SetSize(210, 24)
+    button:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
+    button:SetText(L["rotation_editor_open"])
+    button:SetScript("OnClick", function()
+        if type(openEditor) == "function" then
+            openEditor()
+        else
+            print(L["rotation_editor_unavailable"])
+        end
+    end)
+
+    local hint = parent:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    hint:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y - 30)
+    hint:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -8, y - 30)
+    hint:SetHeight(34)
+    hint:SetJustifyH("LEFT")
+    hint:SetWordWrap(true)
+    hint:SetText(hintText or L["rotation_editor_button_hint"])
+    return y - 72
 end
 
 local contentFrames = {}

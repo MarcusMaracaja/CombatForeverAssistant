@@ -23,6 +23,7 @@ local defaults = {
     warnOutdated = true,
     optionsWidth = 520,
     optionsHeight = 420,
+    assistSmartTabEnabled = true,
     RotationEditor = {},
 }
 
@@ -473,7 +474,7 @@ function addon.Compat.SpellIDFromName(name)
 end
 
 -- Cooldown de um spellID pelo cliente Forever (C_Spell.GetSpellCooldown).
--- Retorna (timeLeft, duration). Usa issecretvalue como fail-safe.
+-- Retorna (timeLeft, duration); campos secretos são desconhecidos, não cooldown infinito.
 -- CheckBuff / CheckDebuff — leitura de auras via C_UnitAuras (moderna) com
 -- fallback para UnitBuff/UnitDebuff. mine=true exige sourceUnit == "player".
 -- Em combate auras podem ser secret → retornam false (fail-safe).
@@ -549,7 +550,6 @@ local function cooldownFromInfo(info)
     if type(info) ~= "table" then return 0, 0, false end
     local start, startSecret = cooldownField(info, "startTime", "cooldownStartTime")
     local duration, durationSecret = cooldownField(info, "duration", "cooldownDuration")
-    local remaining, remainingSecret = cooldownField(info, "timeUntilEndOfStartRecovery")
     local okActive, activeValue = pcall(function() return info.isActive end)
     local activeSecret = okActive and activeValue ~= nil
         and _G.issecretvalue and issecretvalue(activeValue) or false
@@ -560,10 +560,12 @@ local function cooldownFromInfo(info)
         timeLeft = math.max(0, start + duration - now)
     end
     if timeLeft == nil then
-        if remaining and remaining > 0 then return remaining, duration or 0, true end
-        if startSecret or durationSecret or remainingSecret or activeSecret or isActive then
-            if isActive and duration and duration <= 1.5 then return 0, duration, true end
-            return math.huge, duration or 0, true
+        if isActive and duration and duration > 0 then
+            if duration <= 1.5 then return 0, duration, true end
+            return duration, duration, true
+        end
+        if startSecret or durationSecret or activeSecret then
+            return 0, duration or 0, false
         end
         return 0, 0, false
     end
