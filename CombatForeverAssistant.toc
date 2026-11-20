@@ -15,8 +15,6 @@ Visuals.lua
 KeyButton.lua
 MinimapButton.lua
 Options.lua
-Modules\Shared\RotationStore.lua
-Modules\Shared\RotationEditor.lua
 Modules\Hunter\Localization.lua
 Modules\Hunter\Functions.lua
 Modules\Hunter\Predicates.lua
@@ -26,15 +24,3 @@ Modules\Hunter\Scripts_MM.lua
 Modules\Hunter\Scripts.lua
 Modules\Hunter\RotationEditor.lua
 Modules\Hunter\Options.lua
-Modules\Druid\Module.lua
-Modules\Druid\Localization.lua
-Modules\Druid\Functions.lua
-Modules\Druid\Predicates.lua
-Modules\Druid\Scripts_CAT.lua
-Modules\Druid\Scripts_BEAR.lua
-Modules\Druid\Scripts_BAL.lua
-Modules\Druid\Scripts_REST.lua
-Modules\Druid\Scripts_SELF.lua
-Modules\Druid\Scripts.lua
-Modules\Druid\RotationEditor.lua
-Modules\Druid\Options.lua

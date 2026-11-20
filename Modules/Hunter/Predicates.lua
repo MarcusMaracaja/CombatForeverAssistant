@@ -93,10 +93,13 @@ P["no_any_sting"] = {
 P["melee_or_close"] = {
     fn = function(env) return env.tooCloseForRanged or env.isMelee end,
 }
+P["melee_only"] = {
+    fn = function(env) return hasActiveEnemy(env) and env.isMelee and true or false end,
+}
 P["dead_zone_not_melee"] = {
     -- Zona morta do Hunter (5-10 yd): Disengage.
     -- env.isDeadZone é o dado explícito (distância medida ou sondagem
-    -- Atacar/Corte de Asa); o segundo teste é o fallback do modelo clean-room.
+    -- Atacar/Corte de Asa); o segundo teste é o fallback do SFF.
     fn = function(env)
         if env.isDeadZone ~= nil then return env.isDeadZone and true or false end
         return env.tooCloseForRanged and not env.isMelee and true or false
@@ -155,6 +158,7 @@ local LABELS = {
     no_serpent_mm               = LBL("Sem Serpent Sting", "No Serpent Sting"),
     no_any_sting                = LBL("Sem nenhuma Sting", "No Sting active"),
     melee_or_close              = LBL("Melee/perto", "Melee/close"),
+    melee_only                  = LBL("Melee real", "Actual melee range"),
     dead_zone_not_melee         = LBL("Zona morta", "Dead zone"),
     pvp_not_clipped_melee       = LBL("PvP melee, sem Wing Clip", "PvP melee, no Wing Clip"),
     melee_enemy_interruptible   = LBL("Melee, alvo conjurando", "Melee, target casting"),

@@ -8,15 +8,18 @@ local Hunter = module
 Hunter.RotationModuleName = "CombatForeverAssistant"
 Hunter.RotationSpecs = Hunter.RotationSpecs or {}
 
+-- A ordem é intencional: Contra-ataque é reativo e só entra quando a API o
+-- considera utilizável; Mangusto e Raptor exigem melee real. Armadilhas mantêm
+-- seus gates de alvo/cast/AoE/distância, sem exigir alvo hostil no gate global.
 Hunter.HunterMeleeNodes = {
     { id = "disengage",       spellID = 781,   name = "Disengage",       color = "Defensive", condition = "dead_zone_not_melee" },
-    { id = "counterattack",   spellID = 19306, name = "Counterattack",   color = "Damage",     condition = "melee_or_close" },
-    { id = "mongoose_bite",   spellID = 1495,  name = "Mongoose Bite",   color = "Damage",     condition = "melee_or_close" },
-    { id = "raptor_strike",   spellID = 2973,  name = "Raptor Strike",   color = "Damage",     condition = "melee_or_close" },
+    { id = "counterattack",   spellID = 19306, name = "Counterattack",   color = "Damage",     condition = "melee_or_close", opts = { noRange = true, notIfActive = true } },
+    { id = "mongoose_bite",   spellID = 1495,  name = "Mongoose Bite",   color = "Damage",     condition = "melee_only",     opts = { noRange = true } },
+    { id = "raptor_strike",   spellID = 2973,  name = "Raptor Strike",   color = "Damage",     condition = "melee_only",     opts = { noRange = true, notIfActive = true } },
     { id = "wing_clip",       spellID = 2974,  name = "Wing Clip",       color = "Interrupt",  condition = "pvp_not_clipped_melee" },
-    { id = "freezing_trap",   spellID = 1499,  name = "Freezing Trap",   color = "Interrupt",  condition = "melee_enemy_interruptible" },
-    { id = "explosive_trap",  spellID = 13813, name = "Explosive Trap",  color = "AoE",        condition = "within_8_aoe" },
-    { id = "immolation_trap", spellID = 13795, name = "Immolation Trap", color = "AoE",        condition = "within_8_st" },
+    { id = "freezing_trap",   spellID = 1499,  name = "Freezing Trap",   color = "Interrupt", condition = "melee_enemy_interruptible", opts = { noEnemy = true } },
+    { id = "explosive_trap",  spellID = 13813, name = "Explosive Trap",  color = "AoE",        condition = "within_8_aoe",             opts = { noEnemy = true } },
+    { id = "immolation_trap", spellID = 13795, name = "Immolation Trap", color = "AoE",        condition = "within_8_st",               opts = { noEnemy = true } },
 }
 
 Hunter.RotationSpecs.SV = {
