@@ -8,12 +8,20 @@ local addon = _G.CFA
 local L = module.L
 
 -- ---------------------------------------------------------------------------
+-- Cache de pontos por árvore (C_Traits). Declarado aqui porque o frame de
+-- rastreio o invalida no respec (PLAYER_TALENT_CHANGED).
+-- ---------------------------------------------------------------------------
+local _talentCountCache = nil
+
+-- ---------------------------------------------------------------------------
 -- Tracking frame (aliases created at load so later files can use them)
 -- ---------------------------------------------------------------------------
 local trackerFrame = CreateFrame("Frame", "CombatForeverAssistantHunterTracker", UIParent)
 trackerFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 trackerFrame:RegisterEvent("PLAYER_TARGET_CHANGED")
 trackerFrame:RegisterEvent("PLAYER_REGEN_ENABLED")
+trackerFrame:RegisterEvent("PLAYER_TALENT_CHANGED")
+trackerFrame:RegisterEvent("CHARACTER_POINTS_CHANGED")
 trackerFrame:RegisterEvent("UNIT_PET")
 trackerFrame:RegisterEvent("UNIT_DIED")
 trackerFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
@@ -21,6 +29,9 @@ trackerFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
 trackerFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "PLAYER_TARGET_CHANGED" then
         module.OnTargetChanged()
+    elseif event == "PLAYER_TALENT_CHANGED" or event == "CHARACTER_POINTS_CHANGED" then
+        -- respec: o cache de pontos por árvore ficou velho
+        _talentCountCache = nil
     elseif event == "PLAYER_ENTERING_WORLD" then
         -- NOTE: aspect belief is intentionally kept (persistent per character);
         -- aspects don't expire on /reload, only on death or when recast.
@@ -235,7 +246,7 @@ function module:BuildEnv()
     env.tooCloseForRanged = false
     env.isDeadZone = false
     env.targetDistance = nil
-    -- Distância: UnitDistanceSquared (medida) -> sondagem de slot (SFF) -> chute seguro.
+    -- Distância: UnitDistanceSquared (medida) -> sondagem de slot (modelo clean-room) -> chute seguro.
     --
     -- Zona morta do Hunter (WotLK): corpo a corpo precisa de 5 yd e as
     -- habilidades de longo alcance não funcionam entre 5 e 10 yd.
@@ -253,7 +264,7 @@ function module:BuildEnv()
             env.isDeadZone = (dist > 5 and dist <= 10)
         else
             local melee = addon:IsInMeleeRange("target")
-            local deadZone = addon:IsInDeadZoneRange("target")
+            local deadZone = module:IsInDeadZoneRange("target")
             if melee == true then
                 env.targetDistance = 5
                 env.isMelee = true
@@ -295,7 +306,6 @@ end
 -- ---------------------------------------------------------------------------
 local TREE_ORDER_HUNTER = { "SV", "MM", "BM" }
 
-local _talentCountCache = nil
 local function talentTreePointsByOrdinal()
     if _talentCountCache then return _talentCountCache end
     _talentCountCache = false
@@ -369,7 +379,7 @@ local function isGroupInCombat()
 end
 
 -- ---------------------------------------------------------------------------
--- Aspects (global management) — paridade com o SFF, mas SEM travar a rotação:
+-- Aspects (global management) — paridade com o modelo clean-room, mas SEM travar a rotação:
 --  * só sugere o aspecto se ele estiver realmente "castable" (conhecido, sem CD);
 --  * se o jogador ignorar o aspecto algumas vezes, o addon para de insistir
 --    (trava permanente da rotação é pior do que não sugerir o aspecto).
@@ -452,139 +462,20 @@ function module:ManageAspects(env)
 end
 
 -- ---------------------------------------------------------------------------
--- Per-character rotation overrides (enabled / condition / filter).
--- charDb.hunterRotation[specKey][nodeId] = { enabled=bool?, condition=string?,
--- filter={axis=value}? } — merged over the declared defaults on every call.
+-- Per-character rotation overrides (enabled / condition / filter / ordem).
+--
+-- Implementação COMPARTILHADA (Modules/Shared/RotationStore.lua) — o mesmo
+-- código serve para o Hunter e para o Druid; assim uma correção no editor
+-- vale para todas as classes.
+--   charDb.hunterRotation[specKey][nodeId] = { enabled=bool?, condition=string?,
+--                                               filter={axis=value}? }
+--   charDb.hunterOrder[specKey] = { "nodeId", ... }   (ordem via ^/v)
+--
+-- Convenções de chamada (nunca misturar ponto e dois-pontos):
+--   module:GetEffectiveNodes(specKey)  -> método (self implícito)
+--   module.GetRotationDisabled(specKey) -> FUNÇÃO COM PONTO (sem self)
 -- ---------------------------------------------------------------------------
-local function deepCopyNode(n)
-    local out = {}
-    for k, v in pairs(n) do
-        if k == "filter" and type(v) == "table" then
-            local f = {}
-            for fk, fv in pairs(v) do f[fk] = fv end
-            out.filter = f
-        else
-            out[k] = v
-        end
-    end
-    return out
-end
-
-local function rotationOverrides(specKey)
-    return module.charDb and module.charDb.hunterRotation and module.charDb.hunterRotation[specKey] or nil
-end
-
-local function rotationOrder(specKey)
-    return module.charDb and module.charDb.hunterOrder and module.charDb.hunterOrder[specKey] or nil
-end
-
-function module:GetNodeOrder(specKey)
-    local order = rotationOrder(specKey)
-    if type(order) == "table" then return order end
-    local spec = module.RotationSpecs and module.RotationSpecs[specKey]
-    if not spec then return nil end
-    local out = {}
-    for _, n in ipairs(spec.nodes) do out[#out + 1] = n.id end
-    return out
-end
-
-function module:SetNodeOrder(specKey, order)
-    if not module.charDb then return end
-    module.charDb.hunterOrder = module.charDb.hunterOrder or {}
-    module.charDb.hunterOrder[specKey] = order
-end
-
-function module:MoveNode(specKey, nodeId, delta)
-    local unpackFn = table.unpack or unpack
-    local order = module:GetNodeOrder(specKey)
-    if not order then return false end
-    order = unpackFn and { unpackFn(order) } or { unpack(order) }
-    local idx
-    for i, id in ipairs(order) do if id == nodeId then idx = i break end end
-    if not idx then return false end
-    local j = idx + delta
-    if j < 1 or j > #order then return false end
-    order[idx], order[j] = order[j], order[idx]
-    module:SetNodeOrder(specKey, order)
-    return true
-end
-
-function module:GetEffectiveNodes(specKey)
-    local spec = module.RotationSpecs and module.RotationSpecs[specKey]
-    if not spec then return nil end
-    local ov = rotationOverrides(specKey)
-    local out = {}
-    local defaultIndex = {}
-    for i, base in ipairs(spec.nodes) do
-        defaultIndex[base.id] = i
-        local o = ov and ov[base.id]
-        if o then
-            local n = deepCopyNode(base)
-            if o.enabled ~= nil then n.enabled = o.enabled end
-            if o.condition ~= nil then n.condition = o.condition end
-            if o.filter ~= nil then
-                if type(o.filter) == "table" and next(o.filter) then
-                    n.filter = o.filter
-                else
-                    n.filter = nil
-                end
-            end
-            out[#out + 1] = n
-        else
-            out[#out + 1] = base
-        end
-    end
-    -- per-character custom order (^/v buttons in the editor) wins over the
-    -- declared default; nodes not in the custom list keep default position.
-    local custom = rotationOrder(specKey)
-    if type(custom) == "table" and #custom > 0 then
-        local pos = {}
-        for i, id in ipairs(custom) do pos[id] = i end
-        table.sort(out, function(a, b)
-            local pa, pb = pos[a.id], pos[b.id]
-            if pa and pb then return pa < pb end
-            if pa then return true end
-            if pb then return false end
-            return (defaultIndex[a.id] or 0) < (defaultIndex[b.id] or 0)
-        end)
-    end
-    return out
-end
-
-function module:SetNodeOverride(specKey, nodeId, key, value)
-    local charDb = module.charDb
-    if not charDb then return end
-    charDb.hunterRotation = charDb.hunterRotation or {}
-    charDb.hunterRotation[specKey] = charDb.hunterRotation[specKey] or {}
-    local ov = charDb.hunterRotation[specKey][nodeId]
-    if value == nil then
-        if ov then
-            ov[key] = nil
-            if not next(ov) then charDb.hunterRotation[specKey][nodeId] = nil end
-            if not next(charDb.hunterRotation[specKey]) then charDb.hunterRotation[specKey] = nil end
-        end
-        return
-    end
-    if not ov then ov = {}; charDb.hunterRotation[specKey][nodeId] = ov end
-    ov[key] = value
-end
-
-function module:ResetRotationOverrides(specKey)
-    if module.charDb then
-        if module.charDb.hunterRotation then module.charDb.hunterRotation[specKey] = nil end
-        if module.charDb.hunterOrder then module.charDb.hunterOrder[specKey] = nil end
-    end
-end
-
-function module.GetRotationDisabled(specKey)
-    local ov = rotationOverrides(specKey)
-    if not ov then return nil end
-    local m = {}
-    for id, o in pairs(ov) do
-        if o.enabled == false then m[id] = true end
-    end
-    return m
-end
+addon:CreateRotationStore(module, "hunter")
 
 -- ---------------------------------------------------------------------------
 -- Suggestion plumbing
@@ -598,6 +489,14 @@ function module:Suggest(spellID, color)
     local knownID = module.Compat and module.Compat.HighestKnownSpellID and module.Compat.HighestKnownSpellID(spellID) or spellID
     module.PendingSuggestion = { spellID = knownID or spellID, color = color or "Utility" }
     return true
+end
+
+-- Libera o tick depois de uma sugestão utilitária ("passthrough"): a sugestão
+-- continua em PendingSuggestion como fallback, mas os nós seguintes da
+-- rotação podem substituí-la. Assim a utilidade NUNCA bloqueia o combate
+-- (paridade com a intenção do modelo clean-room, em que as duas piscavam juntas).
+function module:ReleaseSuggestion()
+    module.TickFlashUsed = nil
 end
 
 function module:TryFlash(spellID, color, condition, name, env, opts)
@@ -688,7 +587,7 @@ function module:GetSuggestion()
     end
 
     -- Pet management (utilidade): vem DEPOIS da rotação da spec, para nunca
-    -- bloquear as habilidades de combate (o SFF documenta o mesmo: "Curar/
+    -- bloquear as habilidades de combate (o modelo clean-room documenta o mesmo: "Curar/
     -- Chamar Pet piscam JUNTO com a rotação (não bloqueiam)").
     if env.petAlive then
         local mending = module.HasFamilyBuff("pet", "MendPet")

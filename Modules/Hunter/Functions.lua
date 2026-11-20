@@ -79,7 +79,7 @@ end
 
 function module.CheckCastable(z)
     if type(z) ~= "table" then return false end
-    -- Usa o CheckIfSpellCastable robusto do Core (baseado no SFF), que cobre:
+    -- Usa o CheckIfSpellCastable robusto do Core (baseado no modelo clean-room), que cobre:
     -- spell conhecido, cooldown (spellID + slot da barra como reforço), GCD,
     -- alcance, auras (buff/debuff/myBuff/myDebuff), EnemyTargetNeeded,
     -- TargetThatUsesManaNeeded, NotIfActive, EvenIfNotUsable.
@@ -120,14 +120,24 @@ function module.TargetIsMeleeClass()
     return cls == "WARRIOR" or cls == "ROGUE"
 end
 
+-- Zona morta exclusiva do Hunter: 5 < distância <= 10 yards.
+-- A medida é a única fonte autoritativa; sem leitura, retorna desconhecido.
+function module:IsInDeadZoneRange(unit)
+    unit = unit or "target"
+    if not UnitExists(unit) then return nil end
+    local distance = self:TargetDistance(unit)
+    if not distance then return nil end
+    return (distance > 5 and distance <= 10) and true or false
+end
+
 -- PvE silence/interrupt question: is the current enemy casting an
 -- interruptible spell?
 function module.IsTargetInterruptibleCasting(unit)
     unit = unit or "target"
-    if type(UnitCastingInfo) ~= "function" then return false end
-    local ok, name, _, _, _, _, canInterrupt = pcall(UnitCastingInfo, unit)
-    if not ok or not name then return false end
-    return canInterrupt and true or false
+    if addon.Compat and type(addon.Compat.IsInterruptibleCasting) == "function" then
+        return addon.Compat.IsInterruptibleCasting(unit) and true or false
+    end
+    return false
 end
 
 -- ---------------------------------------------------------------------------
@@ -225,7 +235,7 @@ local function stripAspectName(n)
     return n:lower():gsub("%s*%b()%s*$", "")
 end
 
--- Aspect semantics (igual ao SFF — SpellFlash_Hunter/Functions.lua IsAspectIDActive):
+-- Semântica do aspecto (comportamento validado na referência clean-room):
 --  1) aura do jogador — por NOME LOCALIZADO (funciona em ptBR) e por spellID;
 --  2) BuffLib por família/aura ID;
 --  3) crença do nosso próprio cast (sessão) — auras são secret em combate;

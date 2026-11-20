@@ -17,6 +17,14 @@ local COLORS = {
     Interrupt = { 1.0, 1.0, 0.15 },
     Defensive = { 0.2, 1.0, 0.2 },
     Utility   = { 0.2, 0.8, 1.0 },
+    -- Cores extras (paridade com o modelo clean-room; usadas pelo módulo do Druid)
+    Yellow    = { 1.0, 0.95, 0.30 },
+    Orange    = { 1.0, 0.60, 0.15 },
+    Pink      = { 1.0, 0.50, 0.75 },
+    White     = { 1.0, 1.0, 1.0 },
+    Aqua      = { 0.20, 0.90, 0.90 },
+    Purple    = { 0.70, 0.45, 1.0 },
+    Green     = { 0.35, 1.0, 0.35 },
 }
 
 Visuals.PresetColors = {

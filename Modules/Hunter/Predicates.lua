@@ -96,7 +96,7 @@ P["melee_or_close"] = {
 P["dead_zone_not_melee"] = {
     -- Zona morta do Hunter (5-10 yd): Disengage.
     -- env.isDeadZone é o dado explícito (distância medida ou sondagem
-    -- Atacar/Corte de Asa); o segundo teste é o fallback do SFF.
+    -- Atacar/Corte de Asa); o segundo teste é o fallback do modelo clean-room.
     fn = function(env)
         if env.isDeadZone ~= nil then return env.isDeadZone and true or false end
         return env.tooCloseForRanged and not env.isMelee and true or false

@@ -255,6 +255,25 @@ local FAMILIES = {
     { 13161, 1299445, 1299446, 1299447 },                       -- Aspect of the Beast
     { 13795, 14302, 14303, 14304, 14305 },                      -- Immolation Trap
     { 13813, 14310, 14311, 14312 },                             -- Explosive Trap
+
+    -- Druid: IDs confirmados nos dados locais do cliente. A ordem vai do
+    -- rank mais baixo para o mais alto; HighestKnownSpellID percorre de trás
+    -- para frente. O primeiro ID de cada família é o ID canônico do nó.
+    { 99, 1735, 9490, 9747, 9898 },                             -- Demoralizing Roar
+    { 1126, 5232, 6756, 5234, 8907, 9884, 9885 },               -- Mark of the Wild
+    { 467, 782, 1075, 8914, 9756, 9910 },                       -- Thorns
+    { 16689, 16810, 16811, 16812, 16813, 17329 },               -- Nature's Grasp
+    { 5176, 5177, 5178, 5179, 5180 },                           -- Wrath
+    { 779, 780 },                                               -- Swipe
+    { 6807, 6808, 6809 },                                       -- Maul
+    { 1079, 9492, 9493, 9752, 9894, 9896 },                     -- Rip
+    { 1822, 1823, 1824, 9904 },                                 -- Rake
+    { 9005, 9007, 9823, 9827 },                                 -- Pounce
+    { 22842, 22895, 22896 },                                    -- Frenzied Regeneration
+    { 8950, 8951, 8955 },                                       -- Starfire
+    { 8921, 8924, 8925, 8926, 8927, 8928, 8929, 9833, 9834, 9835 }, -- Moonfire
+    { 5570, 24974, 24975, 24976, 24977 },                       -- Insect Swarm
+    { 48574, 54802 },                                           -- Lacerate (ID opcional)
 }
 local familyOf = {}
 for _, fam in ipairs(FAMILIES) do
@@ -262,72 +281,94 @@ for _, fam in ipairs(FAMILIES) do
 end
 addon.Compat.FamilyOf = familyOf
 
--- direct "known" check by ID (client exposes C_SpellBook.IsSpellKnown[OrInSpellBook])
+-- Estado de aprendizagem por ID:
+--   true  = comprovadamente aprendida
+--   false = comprovadamente NÃO aprendida
+--   nil   = API ausente/ilegível ou apenas presença no livro
+--
+-- IsSpellKnownOrInSpellBook não prova aprendizagem: uma spell pode estar no
+-- livro sem ter sido aprendida. Por isso IsSpellKnown é consultado primeiro e
+-- seu false é autoritativo.
 local _knownIDCache = {}
-function addon.Compat.IsSpellKnownID(id)
+local function probeKnown(fn, id)
+    local ok, known = pcall(fn, id)
+    if not ok then return nil end
+    if known == true then return true end
+    if known == false then return false end
+    return nil
+end
+
+function addon.Compat.KnownState(id)
     if type(id) ~= "number" then return false end
     if _knownIDCache[id] == true then return true end
-    local function probe(fn)
-        local ok, known = pcall(fn, id)
-        if not ok then return nil end
-        if known == true then return true end
-        if known == false then return false end
-        return nil
-    end
-    local sawFalse = false
-    if C_SpellBook and type(C_SpellBook.IsSpellKnownOrInSpellBook) == "function" then
-        local r = probe(C_SpellBook.IsSpellKnownOrInSpellBook)
-        if r == true then _knownIDCache[id] = true return true end
-        if r == false then sawFalse = true end
-    end
+
     if C_SpellBook and type(C_SpellBook.IsSpellKnown) == "function" then
-        local r = probe(C_SpellBook.IsSpellKnown)
-        if r == true then _knownIDCache[id] = true return true end
+        local state = probeKnown(C_SpellBook.IsSpellKnown, id)
+        if state == true then
+            _knownIDCache[id] = true
+            return true
+        end
+        if state == false then return false end
+    end
+
+    if C_SpellBook and type(C_SpellBook.IsSpellKnownOrInSpellBook) == "function" then
+        local state = probeKnown(C_SpellBook.IsSpellKnownOrInSpellBook, id)
+        -- false prova que nem está no livro; true só prova presença no livro.
+        if state == false then return false end
+    end
+
+    return nil
+end
+
+-- Compatibilidade booleana: desconhecido falha aberto para não matar a rotação.
+-- O false autoritativo continua bloqueando a spell.
+function addon.Compat.IsSpellKnownID(id)
+    local state = addon.Compat.KnownState(id)
+    if state == nil then return true end
+    return state
+end
+
+-- Estado por família: true se qualquer rank foi aprendido, false se todos os
+-- ranks consultáveis foram negados e nil se o conhecimento é desconhecido.
+function addon.Compat.SpellKnownState(id)
+    if type(id) ~= "number" then return false end
+    local fam = familyOf[id]
+    local ids = fam or { id }
+    local sawFalse = false
+    for i = #ids, 1, -1 do
+        local state = addon.Compat.KnownState(ids[i])
+        if state == true then return true end
+        if state == false then sawFalse = true end
     end
     if sawFalse then return false end
-    -- Sem resposta confiável: fail-open. NUNCA cachear "false": no login o
-    -- spellbook pode ainda não estar pronto (cache envenenado = rotação morta).
-    return true
+    return nil
 end
 
 -- "does the player know this spell?" (any rank of its family)
 function addon.Compat.SpellKnown(id)
-    if type(id) ~= "number" then return false end
-    local fam = familyOf[id]
-    if fam then
-        for i = #fam, 1, -1 do
-            if addon.Compat.IsSpellKnownID(fam[i]) then return true end
-        end
-        return false
-    end
-    return addon.Compat.IsSpellKnownID(id)
+    local state = addon.Compat.SpellKnownState(id)
+    if state == nil then return true end
+    return state
 end
 
--- Highest known rank of the family; nil when nothing in the family is known.
+-- Highest known rank of the family; nil when nothing in the family is proven.
 local _highestKnownCache = {}
 function addon.Compat.HighestKnownSpellID(id)
     if type(id) ~= "number" then return nil end
     if _highestKnownCache[id] then return _highestKnownCache[id] end
     local fam = familyOf[id]
-    if fam then
-        for i = #fam, 1, -1 do
-            if addon.Compat.IsSpellKnownID(fam[i]) then
-                _highestKnownCache[id] = fam[i]
-                return fam[i]
-            end
+    local ids = fam or { id }
+    for i = #ids, 1, -1 do
+        if addon.Compat.KnownState(ids[i]) == true then
+            _highestKnownCache[id] = ids[i]
+            return ids[i]
         end
-        return nil
-    end
-    -- no family: direct check on the exact ID
-    if addon.Compat.IsSpellKnownID(id) then
-        _highestKnownCache[id] = id
-        return id
     end
     return nil
 end
 
 -- Resolve qualquer rank para o rank conhecido da família (CD/alcance).
--- Como o SFF: se a família não tiver rank conhecido, devolve o próprio ID.
+-- Como o modelo clean-room: se a família não tiver rank conhecido, devolve o próprio ID.
 function addon.Compat.ResolveKnownID(id)
     if type(id) ~= "number" then return id end
     if familyOf[id] then
@@ -703,10 +744,20 @@ end
 
 -- Retorna true se a racial desta raça deve ser sugerida agora, dadas as condições.
 -- `env` é a tabela de contexto da rotação (pode ser nil -> condição não depende dela).
-function addon:ShouldUseRacial(raceToken, env)
+function addon:ShouldUseRacial(raceToken, env, classTag)
     if type(raceToken) ~= "string" then return false end
     local data = self.RacialData[raceToken]
     if not data then return false end
+    -- A whitelist por classe é parte do contrato da racial. Classes não
+    -- listadas nunca recebem a spell, mesmo que a API de castabilidade a
+    -- considere disponível.
+    local playerClass = classTag
+    if not playerClass and type(UnitClass) == "function" then
+        local ok, _, className = pcall(UnitClass, "player")
+        if ok then playerClass = className end
+    end
+    if type(data.classes) ~= "table" then return false end
+    if not playerClass or not data.classes[playerClass] then return false end
     -- se a raça não tem racial ativa (spellID nil), nunca sugere
     if not data.spellID then return false end
     local cond = data.condition or "always"
@@ -736,7 +787,7 @@ function addon:SuggestRacial(module, env)
     -- resolve aliases localizados para o token canônico
     local lower = raceToken:lower()
     raceToken = self.RacialTokenAliases[lower] or raceToken
-    if not self:ShouldUseRacial(raceToken, env) then return false end
+    if not self:ShouldUseRacial(raceToken, env, module and module.classTag) then return false end
     local spellID = self:GetRacialSpellID(raceToken)
     if not spellID then return false end
     local color = self.RacialData[raceToken].color or "Utility"
@@ -757,7 +808,7 @@ end
 
 -- ---------------------------------------------------------------------------
 -- FindActionSlot — busca por slot na barra de ação de uma spell (por ID ou
--- nome-base). Baseado no SFF (SpellFlashForever.lua). Com cache, suporte a
+-- nome-base). Baseado no comportamento da referência clean-room. Com cache, suporte a
 -- macros, ataque automático e match por nome-base (insensível a rank/locale).
 -- ---------------------------------------------------------------------------
 local ACTION_SLOT_CACHE = {}
@@ -965,7 +1016,7 @@ function addon:IsSpellInRangeEx(spellName, unit)
 end
 
 -- ---------------------------------------------------------------------------
--- ActionSlotRange / TargetDistance / IsInMeleeRange — portados do SFF
+-- ActionSlotRange / TargetDistance / IsInMeleeRange — portados do modelo clean-room
 -- (SharedFunctions.lua). Sem chute: nil = desconhecido.
 -- ---------------------------------------------------------------------------
 function addon:ActionSlotRange(slot, unit)
@@ -1005,16 +1056,14 @@ end
 function addon:IsInMeleeRange(unit)
     unit = unit or "target"
     if not UnitExists(unit) then return nil end
+    local distance = self:TargetDistance(unit)
+    if distance then return distance <= 5 and true or false end
+
+    -- Sonda genérica: o slot "Atacar" existe para todas as classes.
     local attackSlot = self:FindActionSlot(6603)
     local attackRange = self:ActionSlotRange(attackSlot, unit)
     if attackRange ~= nil then return attackRange end
-    local known = (self.Compat and self.Compat.HighestKnownSpellID and self.Compat.HighestKnownSpellID(2974)) or 2974
-    local r = self:IsSpellInRangeEx(known, unit)
-    if r == true then return true end
-    local autoSlot = self:FindActionSlot(75)
-    local autoRange = self:ActionSlotRange(autoSlot, unit)
-    if autoRange == true then return false end
-    if autoRange == false then return true end
+
     if not (type(InCombatLockdown) == "function" and InCombatLockdown())
         and type(CheckInteractDistance) == "function" then
         local ok, can = pcall(CheckInteractDistance, unit, 3)
@@ -1022,30 +1071,6 @@ function addon:IsInMeleeRange(unit)
             return can and true or false
         end
     end
-    return nil
-end
-
--- ---------------------------------------------------------------------------
--- Zona morta do Hunter (5-10 yd): o corpo a corpo (5 yd) não alcança e as
--- habilidades de longo alcance não funcionam — é o caso do Disengage.
---   true  = zona morta
---   false = fora da zona morta
---   nil   = desconhecido (sem leitura de distância/alcance)
--- Sem distância medida: usa a sondagem do slot "Atacar" (≤5 yd) contra a
--- sondagem do Corte de Asa (≤10 yd): ataque fora + corte dentro = zona morta.
--- ---------------------------------------------------------------------------
-function addon:IsInDeadZoneRange(unit)
-    unit = unit or "target"
-    if not UnitExists(unit) then return nil end
-    local dist = self:TargetDistance(unit)
-    if dist then return (dist > 5 and dist <= 10) and true or false end
-    local attackSlot = self:FindActionSlot(6603)
-    local attackRange = self:ActionSlotRange(attackSlot, unit)
-    if attackRange == true then return false end
-    local known = (self.Compat and self.Compat.HighestKnownSpellID and self.Compat.HighestKnownSpellID(2974)) or 2974
-    local r = self:IsSpellInRangeEx(known, unit)
-    if r == true then return true end
-    if attackRange == false then return false end
     return nil
 end
 
@@ -1066,7 +1091,7 @@ function addon:Flashable(spellName)
 end
 
 -- ---------------------------------------------------------------------------
--- CheckIfSpellCastable — coração do sistema de castabilidade (portado do SFF).
+-- CheckIfSpellCastable — coração do sistema de castabilidade (portado do modelo clean-room).
 -- Verifica: spell conhecido, cooldown (spellID + slot da barra como reforço),
 -- GCD, alcance, auras (buff/debuff/myBuff/myDebuff), EnemyTargetNeeded,
 -- TargetThatUsesManaNeeded, NotIfActive, EvenIfNotUsable.
@@ -1074,7 +1099,7 @@ end
 local GLOBAL_COOLDOWN_SPELL = ({
     DEATHKNIGHT = 45902, DRUID = 5176, HUNTER = 3044, MAGE = 133, PALADIN = 635,
     PRIEST = 585, ROGUE = 1752, SHAMAN = 403, WARLOCK = 686, WARRIOR = 772,
-})[select(2, UnitClass("player")) or ""] or 2973
+})[select(2, UnitClass("player")) or ""]
 
 function addon:CheckIfSpellCastable(z)
     if type(z) ~= "table" then return false end
@@ -1101,18 +1126,23 @@ function addon:CheckIfSpellCastable(z)
 
     local baseName = stripRank(spellName)
 
-    -- "Conhecida": o SFF NÃO bloqueia a rotação por ID (o ID do nó pode ser um
-    -- rank que o jogador não tem mais no livro). Aqui: só bloqueia se o ID e o
-    -- NOME forem simultaneamente desconhecidos (fail-open, igual ao SFF).
+    -- Resolve o rank conhecido ANTES de consultar cooldown, alcance ou
+    -- usabilidade. Um ID de nó antigo ainda é válido quando outro rank da
+    -- mesma família foi aprendido.
+    local knownID = (addon.Compat and addon.Compat.ResolveKnownID and addon.Compat.ResolveKnownID(spellID))
+        or spellID
+
+    -- "Conhecida": false é autoritativo quando a API respondeu. A família de
+    -- ranks já foi considerada por SpellKnown; somente API ausente/ilegível
+    -- permanece fail-open.
     if spellID then
         local known = addon.Compat and addon.Compat.SpellKnown and addon.Compat.SpellKnown(spellID)
         if known == false then
-            local byName = addon.Compat and addon.Compat.HasSpell and addon.Compat.HasSpell(spellName)
-            if not byName then return fail("spell desconhecida (id=" .. tostring(spellID) .. ")") end
+            return fail("spell desconhecida (id=" .. tostring(spellID) .. ")")
         end
     else
         local has = addon.Compat and addon.Compat.HasSpell and addon.Compat.HasSpell(spellName)
-        if not has then return fail("spell desconhecida (" .. tostring(spellName) .. ")") end
+        if has == false then return fail("spell desconhecida (" .. tostring(spellName) .. ")") end
     end
 
     z.Unit = z.Unit or "target"
@@ -1136,7 +1166,7 @@ function addon:CheckIfSpellCastable(z)
 
     local isUsable, notEnoughPower = true, false
     if addon.Compat and addon.Compat.UsableSpell then
-        isUsable, notEnoughPower = addon.Compat.UsableSpell(baseName)
+        isUsable, notEnoughPower = addon.Compat.UsableSpell(baseName, knownID)
     elseif type(IsUsableSpell) == "function" then
         local ok, a, b = pcall(IsUsableSpell, spellName)
         if ok then isUsable = not not a; notEnoughPower = not not b end
@@ -1144,7 +1174,6 @@ function addon:CheckIfSpellCastable(z)
 
     local cooldown = 0
     local duration = 0
-    local knownID = addon.Compat and addon.Compat.ResolveKnownID and addon.Compat.ResolveKnownID(spellID) or spellID
     local cdID = knownID or spellID
     if addon.Compat and addon.Compat.SpellCooldown and cdID then
         local cd, dur = addon.Compat.SpellCooldown(cdID)
@@ -1169,15 +1198,15 @@ function addon:CheckIfSpellCastable(z)
 
     local Aura = z.Debuff or z.Buff or z.MyDebuff or z.MyBuff
 
-    -- Alcance: nil (desconhecido/segreto) não bloqueia — igual ao SFF (SpellInRange retorna 1 quando nil)
+    -- Alcance: nil (desconhecido/segreto) não bloqueia — igual ao modelo clean-room (SpellInRange retorna 1 quando nil)
     local rangeOk = true
     if not z.NoRangeCheck then
         local hasRange = true
         if addon.Compat and addon.Compat.SpellHasRange then
-            hasRange = addon.Compat.SpellHasRange(baseName)
+            hasRange = addon.Compat.SpellHasRange(knownID or baseName)
         end
         if hasRange then
-            local r = addon:IsSpellInRangeEx(baseName, z.Unit)
+            local r = addon:IsSpellInRangeEx(knownID or baseName, z.Unit)
             rangeOk = (r ~= false)
             if not rangeOk then return fail("fora de alcance") end
         end
@@ -1319,8 +1348,8 @@ function addon.SafeNumber(v, fallback)
 end
 
 -- ---------------------------------------------------------------------------
--- Compat: funções de suporte que o CheckIfSpellCastable precisa e que o SFF
--- expõe em SpellFlashAddon. Todas usam pcall + issecretvalue como fail-safe.
+-- Compat: funções de suporte que o CheckIfSpellCastable precisa e que o modelo clean-room
+-- expõe no addon de referência. Todas usam pcall + issecretvalue como fail-safe.
 -- ---------------------------------------------------------------------------
 function addon.Compat.HasSpell(spellName)
     local name = addon.Compat.SpellName and addon.Compat.SpellName(spellName) or spellName
@@ -1329,30 +1358,50 @@ function addon.Compat.HasSpell(spellName)
     if spellID then
         local known = addon.Compat.SpellKnown and addon.Compat.SpellKnown(spellID)
         if known == true then return true end
+        if known == false then return false end
     end
-    if C_Spell and C_Spell.GetSpellInfo then
-        local ok, info = pcall(C_Spell.GetSpellInfo, spellName)
-        if ok and info ~= nil then return true end
+
+    -- Quando não há ID confiável, consulta as APIs de conhecimento pelo nome.
+    -- GetSpellInfo NÃO serve aqui: provar que a spell existe no cliente não
+    -- prova que o personagem aprendeu-a.
+    local sawFalse = false
+    local function probe(fn)
+        local ok, known = pcall(fn, name)
+        if not ok or known == nil then return nil end
+        if known == true then return true end
+        if known == false then return false end
+        return nil
     end
-    if type(GetSpellInfo) == "function" then
-        local ok, result = pcall(GetSpellInfo, name)
-        if ok and result ~= nil then return true end
+    if C_SpellBook and type(C_SpellBook.IsSpellKnown) == "function" then
+        local r = probe(C_SpellBook.IsSpellKnown)
+        if r == true then return true end
+        if r == false then return false end
     end
-    return true -- fail-open: deixar recomendar (cliente-friendly)
+    if C_SpellBook and type(C_SpellBook.IsSpellKnownOrInSpellBook) == "function" then
+        local r = probe(C_SpellBook.IsSpellKnownOrInSpellBook)
+        if r == true then return true end
+        if r == false then sawFalse = true end
+    end
+    if sawFalse then return false end
+    return true -- API ausente/ilegível: fail-open
 end
 
-function addon.Compat.UsableSpell(spellName)
-    local id = type(spellName) == "number" and spellName
+function addon.Compat.UsableSpell(spellName, knownID)
+    local id = (type(knownID) == "number" and knownID)
+        or (type(spellName) == "number" and spellName)
         or (addon.Compat.SpellIDFromName and addon.Compat.SpellIDFromName(spellName)) or nil
     if id and C_Spell and type(C_Spell.IsSpellUsable) == "function" then
         local ok, isUsable, notEnoughPower = pcall(C_Spell.IsSpellUsable, id)
         if ok then
-            if isUsable == true then return true, false end
-            if notEnoughPower == true then return false, true end
-            -- isUsable == false sem "sem mana" pode ser rank/ID inválido:
-            -- não bloqueia (fail-open), tenta o nome abaixo.
+            -- Depois da resolução do rank conhecido, false é autoritativo.
+            -- Ele pode representar proc ausente, recurso insuficiente ou
+            -- qualquer outra condição real da spell; não deve virar fail-open.
+            if isUsable == true then return true, notEnoughPower == true end
+            if isUsable == false then return false, notEnoughPower == true end
         end
     end
+    -- Fallback legado apenas quando a API moderna está ausente, lançou erro
+    -- ou devolveu um valor não booleano.
     if type(IsUsableSpell) == "function" then
         local ok, a, b = pcall(IsUsableSpell, spellName)
         if ok and a ~= nil then return a and true or false, not not b end
@@ -1373,7 +1422,10 @@ end
 function addon.Compat.GetCasting(spellName, unit)
     unit = unit or "player"
     if type(UnitCastingInfo) == "function" then
-        local ok, _, _, _, _, startMS, endMS = pcall(UnitCastingInfo, unit)
+        -- Forever moderno: name, texture, icon, startTimeMS, endTimeMS, ...
+        local ok, castName, texture, icon, startMS, endMS = pcall(UnitCastingInfo, unit)
+        startMS = addon.SafeNumber(startMS, nil)
+        endMS = addon.SafeNumber(endMS, nil)
         if ok and endMS and startMS then
             local remaining = (endMS - (GetTime and GetTime() * 1000 or 0)) / 1000
             if remaining > 0 then return remaining end
@@ -1385,23 +1437,57 @@ end
 
 function addon.Compat.CastingOrChanneling(spellName, unit)
     unit = unit or "player"
-    local name = addon.Compat.SpellName and addon.Compat.SpellName(spellName) or spellName
     local remaining = nil
+    local nowMS = (GetTime and GetTime() * 1000 or 0)
     if type(UnitCastingInfo) == "function" then
-        local okCast, _, _, _, _, startMS, endMS = pcall(UnitCastingInfo, unit)
+        local okCast, castName, texture, icon, startMS, endMS = pcall(UnitCastingInfo, unit)
+        startMS = addon.SafeNumber(startMS, nil)
+        endMS = addon.SafeNumber(endMS, nil)
         if okCast and endMS and startMS then
-            remaining = (endMS - (GetTime and GetTime() * 1000 or 0)) / 1000
+            remaining = (endMS - nowMS) / 1000
             if remaining > 0 then return remaining end
         end
     end
     if type(UnitChannelInfo) == "function" then
-        local okChan, _, _, _, _, endMS = pcall(UnitChannelInfo, unit)
-        if okChan and endMS then
-            remaining = (endMS - (GetTime and GetTime() * 1000 or 0)) / 1000
+        -- UnitChannelInfo usa as mesmas posições de tempo do cast.
+        local okChan, channelName, texture, icon, startMS, endMS = pcall(UnitChannelInfo, unit)
+        startMS = addon.SafeNumber(startMS, nil)
+        endMS = addon.SafeNumber(endMS, nil)
+        if okChan and endMS and startMS then
+            remaining = (endMS - nowMS) / 1000
             if remaining > 0 then return remaining end
         end
     end
     return nil
+end
+
+-- Uma spell é interrompível somente quando a API informa explicitamente
+-- notInterruptible == false. Ausência/ilegibilidade falha de forma segura.
+-- Forever moderno: notInterruptible é o 8º retorno de UnitCastingInfo e o
+-- 7º retorno de UnitChannelInfo.
+function addon.Compat.IsInterruptibleCasting(unit)
+    unit = unit or "target"
+    if type(UnitCastingInfo) == "function" then
+        local ok, castName, texture, icon, startMS, endMS, tradeSkill, castID, notInterruptible = pcall(UnitCastingInfo, unit)
+        if ok and castName then
+            if type(notInterruptible) == "boolean"
+                and not (_G.issecretvalue and issecretvalue(notInterruptible)) then
+                return notInterruptible == false
+            end
+            return false
+        end
+    end
+    if type(UnitChannelInfo) == "function" then
+        local ok, channelName, texture, icon, startMS, endMS, tradeSkill, notInterruptible, spellID = pcall(UnitChannelInfo, unit)
+        if ok and channelName then
+            if type(notInterruptible) == "boolean"
+                and not (_G.issecretvalue and issecretvalue(notInterruptible)) then
+                return notInterruptible == false
+            end
+            return false
+        end
+    end
+    return false
 end
 
 function addon.Compat.SpellHasRange(spellName)
@@ -1437,6 +1523,13 @@ function addon:RunDeclaredRotation(module, specKey, env)
     if type(nodes) ~= "table" then return false end
     local disabled = (type(module.GetRotationDisabled) == "function" and module.GetRotationDisabled(specKey)) or nil
     local preds = type(module.RotationPredicates) == "table" and module.RotationPredicates or {}
+    -- Sugestão "passthrough" (utilitária): fica como FALLBACK e NÃO bloqueia
+    -- os nós de combate seguintes. No modelo clean-room os dois piscam juntos (o modelo clean-room empilha
+    -- overlays); no CFA só cabe uma sugestão por tick -> a de combate vence e
+    -- a utilitária só aparece quando a rotação não tem nada a dizer.
+    -- Lição do Hunter (H-0196/H-0197): utilitário no topo da cadeia = rotação
+    -- morta (o "piscar do pet" bloqueava todas as habilidades de combate).
+    local fallback = nil
     for _, node in ipairs(nodes) do
         if node.enabled ~= false and not (disabled and disabled[node.id]) then
             if addon.NodeFilterPass(env, node.filter) then
@@ -1457,15 +1550,26 @@ function addon:RunDeclaredRotation(module, specKey, env)
                 end
                 if pass then
                     local knownID = addon.Compat.HighestKnownSpellID(node.spellID) or node.spellID
-                    if module:TryFlash(knownID, node.color, function() return true end, node.name, env) then
+                    if module:TryFlash(knownID, node.color, function() return true end, node.name, env, node.opts) then
                         if addon.debugMode then
                             addon:DebugPrint("   -> SUGERIDO", tostring(node.id), tostring(knownID))
                         end
                         if not node.passthrough then return true end
+                        -- utilitária: guarda como fallback e libera o tick
+                        fallback = module.PendingSuggestion
+                        if type(module.ReleaseSuggestion) == "function" then
+                            pcall(module.ReleaseSuggestion, module)
+                        end
                     end
                 end
             end
         end
+    end
+    -- Nenhum nó de combate entrou: devolve a utilitária (se houver).
+    if fallback then
+        module.PendingSuggestion = fallback
+        module.TickFlashUsed = true
+        return true
     end
     return false
 end
