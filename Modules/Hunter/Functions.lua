@@ -119,10 +119,13 @@ end
 -- invalidates previous beliefs (GUID would be secret anyway).
 -- ---------------------------------------------------------------------------
 local markBeliefSlot = 0
+-- Keep Rapid Fire suppressed through its standard cooldown if client data is missing or stale.
+local RAPID_FIRE_COOLDOWN = 300
 module.MarkBelief = { slot = 0, active = false }
 module.SerpentStingBelief = { slot = 0, applied = false, expires = 0 }
 module.WingClipBelief = { slot = 0, applied = false, expires = 0 }
 module.AspectBelief = nil
+module.RapidFireBelief = nil
 module.PET_IS_DEAD = false
 
 -- Exposed so Scripts.lua can create the tracker frame (ordering: module load).
@@ -164,7 +167,9 @@ function module.RegisterCast(castName, castID)
         module.WingClipBelief.expires = GetTime() + 12
         return
     end
-    if strip(3045) == base then -- Rapid Fire: pure self CD, no belief needed
+    if (base and strip(3045) == base) or castID == 3045 then
+        local castAt = GetTime()
+        module.RapidFireBelief = { expires = castAt + RAPID_FIRE_COOLDOWN }
         return
     end
     -- aspect tracking (auras are secret in combat). Persisted per character:
@@ -186,6 +191,27 @@ function module.RegisterCast(castName, castID)
             return
         end
     end
+end
+
+function module.IsRapidFireSuppressed()
+    local belief = module.RapidFireBelief
+    if not belief then
+        local name = module.SpellName(3045)
+        return name ~= nil and module.Compat.CheckBuff(name, "player") or false
+    end
+
+    local now = GetTime()
+    local onCooldown, remaining = addon:IsSpellOnCooldown(3045)
+    if onCooldown then
+        belief.expires = now + remaining
+        return true
+    end
+    local name = module.SpellName(3045)
+    if name and module.Compat.CheckBuff(name, "player") then return true end
+    if now < belief.expires then return true end
+
+    module.RapidFireBelief = nil
+    return false
 end
 
 function module.IsMarkedByUs()

@@ -36,8 +36,9 @@ control.
 | **Rotation editor window** (per-character node toggles, per-node conditions/filters via 6 cascade axes + special predicates, icon-click flash test, `^`/`v` reorder, BM/MM/SV/Extra tabs, reset-to-default) | Implemented — color codes fixed (H-0186/0187) — **not yet verified in game** |
 | **Hunter Extra tab** (per-character toggles for Cheetah, Pack, Monkey, Beast and Hawk suggestions) | Implemented (H-0208) — **not yet verified in game** |
 | **Shaman module** (Elemental and Enhancement damage priorities, Restoration caster fallback, configurable Extra buffs) | Implemented (H-0213) — **not yet verified in game**; Restoration healing is not automated |
+| **Druid module** (Balance, Feral Cat/Bear, Restoration, form/resource-aware rotation, selected-target healing, configurable buffs) | Implemented (H-0224) — **needs in-game validation**; only suggests spells known to the Forever client |
 | Login welcome (spec bless + spec + detection source + race greeting) | Working (tested in game — prints on first tick) |
-| Class modules (Warrior, Druid, Paladin) | **Not implemented yet** — next phases |
+| Class modules (Warrior, Paladin) | **Not implemented yet** — next phases |
 
 ### Development log (2026-11-17/18/19/20)
 
@@ -108,6 +109,26 @@ control.
   are reconciled whenever aura data is readable. Needs in-game validation.
 - **H-0223** — Integrated SmartTabTarget as a **Tab Assistant** page in the CFA menu, with
   independent PvP-only TAB and SHIFT+TAB checkboxes and an in-game status/explanation.
+- **H-0224** — Added the Druid module with Balance, Feral Cat/Bear and Restoration rotations,
+  form/spec selection, the shared rotation editor, rank resolution, cooldown-aware castability,
+  and self/selected-friendly healing. WotLK SpellFlash priorities were adapted to the Forever
+  client; only known spells can be suggested. Needs in-game validation.
+- **H-0225** — Fixed the Zoom visual on Forever by using the client's `SetScaleFrom` /
+  `SetScaleTo` animation methods, retaining legacy aliases and falling back to an opacity pulse.
+- **H-0226** — Hunter Rapid Fire is now suppressed after a confirmed cast while its buff or
+  cooldown is active. A 5-minute fallback prevents repeated suggestions if cooldown data is
+  missing or stale.
+- **H-0227** — The shared update loop now clears highlights, test-flashes and the key button on
+  death, preventing stale recommendations across all class modules.
+- **H-0228** — The key button now resolves its binding from the exact action buttons matched by the
+  highlight system, keeping the displayed key aligned with the highlighted ability.
+- **H-0229** — If the highest-priority suggestion has no bound action button, the key widget now
+  falls through to the next ready, highlighted spell that has a key binding.
+- **H-0230** — Cooldown checks now prefer duration APIs that explicitly exclude the GCD, including
+  short real cooldowns; action-slot fallbacks for the right, left, and bottom-right bars now match
+  their actual slots, so item highlights point to the correct buttons.
+- **H-0231** — The shared rotation editor is included before Druid options load, and Assist defers
+  override-binding changes until combat lockdown ends.
 
 > **Saved variables:** settings persist on `/reload` (and on logout/clean exit), like any
 > Blizzard client. An earlier bug made menu changes persist nowhere: `addon.db` was bound
@@ -224,8 +245,9 @@ Ele **não** aperta a tecla por você — apenas destaca o botão. Você continu
 | **Janela de edição de rotação** (liga/desliga nós por personagem, condições/filtros por nó via 6 eixos de filtro + predicados especiais, clique no ícone para testar o flash, `^`/`v` reordenar, abas BM/MM/SV/Extra, restaurar padrão) | Implementada — códigos de cor corrigidos (H-0186/0187) — **ainda não verificada em jogo** |
 | **Aba Extra do Hunter** (liga/desliga por personagem as recomendações de Guepardo, Matilha, Macaco, Fera e Falcão) | Implementada (H-0208) — **ainda não verificada em jogo** |
 | **Módulo Shaman** (prioridades de dano Elemental e Enhancement, fallback caster para Restauração, buffs Extra configuráveis) | Implementado (H-0213) — **ainda não verificado em jogo**; curas de Restauração não são automatizadas |
+| **Módulo Druida** (Balance, Feral Gato/Urso, Restoration, formas/recursos, cura no alvo selecionado, buffs configuráveis) | Implementado (H-0224) — **precisa de validação no jogo**; só sugere habilidades conhecidas pelo Forever |
 | Boas-vindas no login (bênção da spec + spec + origem da detecção + saudação racial) | Funcionando (testada em jogo — imprime no primeiro tick) |
-| Módulos de classe (Warrior, Druid, Paladin) | **Ainda não implementados** — próximas fases |
+| Módulos de classe (Warrior, Paladin) | **Ainda não implementados** — próximas fases |
 
 ### Log de desenvolvimento (2026-11-17/18/19/20)
 
@@ -293,6 +315,26 @@ Ele **não** aperta a tecla por você — apenas destaca o botão. Você continu
   aspecto são reconciliadas quando as auras podem ser lidas. Precisa de validação em jogo.
 - **H-0223** — Integrado o SmartTabTarget ao menu do CFA como **Tab Assistant**, com caixas
   independentes para TAB e SHIFT+TAB em PvP, status e explicação dentro da aba.
+- **H-0224** — Adicionado o módulo Druida com rotações Balance, Feral Gato/Urso e Restoration,
+  seleção de forma/spec, editor de rotação compartilhado, resolução de ranks, checagem de CD e
+  curas para você ou o aliado selecionado. As prioridades do SpellFlash WotLK foram adaptadas ao
+  Forever; apenas habilidades conhecidas podem ser sugeridas. Precisa de validação em jogo.
+- **H-0225** — Corrigida a visualização Zoom no Forever com os métodos de animação
+  `SetScaleFrom` / `SetScaleTo`, mantendo aliases antigos e fallback para pulso de opacidade.
+- **H-0226** — Rapid Fire do Hunter deixa de ser sugerido após o cast confirmado enquanto o buff
+  ou CD estiver ativo. Um fallback de 5 minutos evita repetição se os dados do CD faltarem ou
+  estiverem desatualizados.
+- **H-0227** — O loop compartilhado agora limpa destaques, flashes de teste e o botão de tecla ao
+  morrer, evitando recomendações antigas em todos os módulos de classe.
+- **H-0228** — O botão de tecla agora usa os mesmos botões encontrados pelo sistema de destaque,
+  mantendo a tecla exibida alinhada à habilidade que está brilhando.
+- **H-0229** — Se a sugestão de maior prioridade não tiver tecla vinculada, o widget agora procura
+  a próxima habilidade pronta e destacada que tenha uma tecla.
+- **H-0230** — A checagem de recarga agora prefere as APIs de duração que excluem o GCD, incluindo
+  cooldowns reais curtos; os fallbacks das barras direita, esquerda e inferior direita agora usam
+  os slots corretos, para o destaque de itens apontar para os botões certos.
+- **H-0231** — O editor compartilhado de rotação está incluído antes de carregar as opções do Druida,
+  e o Assist adia alterações de bindings até o fim do lockdown de combate.
 
 > **Variáveis salvas:** as configurações persistem no `/reload` (e no logout/saída limpa),
 > como em qualquer cliente Blizzard. Um bug anterior fazia as mudanças sumirem: `addon.db`

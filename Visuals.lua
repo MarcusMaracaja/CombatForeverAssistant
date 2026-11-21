@@ -66,10 +66,10 @@ local function slotSpellID(frameBtn)
     if not n then return nil end
     n = tonumber(n)
     if name:match("^ActionButton") then return n end
-    if name:match("^MultiBarRightButton") then return 48 + n end
-    if name:match("^MultiBarLeftButton") then return 60 + n end
+    if name:match("^MultiBarRightButton") then return 24 + n end
+    if name:match("^MultiBarLeftButton") then return 36 + n end
     if name:match("^MultiBarBottomLeftButton") then return 60 + n end
-    if name:match("^MultiBarBottomRightButton") then return 72 + n end
+    if name:match("^MultiBarBottomRightButton") then return 48 + n end
     return nil
 end
 
@@ -240,11 +240,31 @@ local function makeZoomOverlay(btn, rgb, width)
     local pulse = f:CreateAnimationGroup()
     pulse:SetLooping("BOUNCE")
     local scale = pulse:CreateAnimation("Scale")
-    scale:SetFromScale(1, 1)
-    scale:SetToScale(1.18, 1.18)
-    scale:SetDuration(0.36)
-    f.pulse = pulse
-    pulse:Play()
+    local scaleFrom = scale and (scale.SetScaleFrom or scale.SetFromScale)
+    local scaleTo = scale and (scale.SetScaleTo or scale.SetToScale)
+    if type(scaleFrom) == "function" and type(scaleTo) == "function"
+        and type(scale.SetDuration) == "function" then
+        scaleFrom(scale, 1, 1)
+        scaleTo(scale, 1.18, 1.18)
+        scale:SetDuration(0.36)
+    else
+        pulse:Stop()
+        pulse = f:CreateAnimationGroup()
+        pulse:SetLooping("BOUNCE")
+        local alpha = pulse:CreateAnimation("Alpha")
+        if alpha and type(alpha.SetFromAlpha) == "function"
+            and type(alpha.SetToAlpha) == "function" and type(alpha.SetDuration) == "function" then
+            alpha:SetFromAlpha(0.55)
+            alpha:SetToAlpha(1)
+            alpha:SetDuration(0.42)
+        else
+            pulse = nil
+        end
+    end
+    if pulse then
+        f.pulse = pulse
+        pulse:Play()
+    end
     return f
 end
 

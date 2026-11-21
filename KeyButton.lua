@@ -12,19 +12,23 @@ addon.KeyButton = KeyButton
 
 local frame
 
-local ACTION_BINDINGS = {
-    { prefix = "ACTIONBUTTON", offset = 0 },
-    { prefix = "MULTIACTIONBAR1BUTTON", offset = 60 },   -- bottom left bar (shift)
-    { prefix = "MULTIACTIONBAR2BUTTON", offset = 48 },   -- right bar (ctrl)
-    { prefix = "MULTIACTIONBAR3BUTTON", offset = 72 },   -- bottom right bar
-    { prefix = "MULTIACTIONBAR4BUTTON", offset = 84 },   -- extra bar (if present)
+local ACTION_BUTTONS = {
+    { buttonPrefix = "ActionButton", bindingPrefix = "ACTIONBUTTON" },
+    { buttonPrefix = "MultiBarBottomLeftButton", bindingPrefix = "MULTIACTIONBAR1BUTTON" },
+    { buttonPrefix = "MultiBarRightButton", bindingPrefix = "MULTIACTIONBAR2BUTTON" },
+    { buttonPrefix = "MultiBarBottomRightButton", bindingPrefix = "MULTIACTIONBAR3BUTTON" },
+    { buttonPrefix = "MultiBarLeftButton", bindingPrefix = "MULTIACTIONBAR4BUTTON" },
 }
 
-local function bindingForSlot(slot)
-    for _, block in ipairs(ACTION_BINDINGS) do
-        local i = slot - block.offset
-        if i >= 1 and i <= 12 then
-            local key1, key2 = GetBindingKey(block.prefix .. i)
+local function bindingForButton(button)
+    if not button or type(button.GetName) ~= "function" then return nil end
+    local name = button:GetName()
+    if type(name) ~= "string" then return nil end
+
+    for _, bar in ipairs(ACTION_BUTTONS) do
+        local index = tonumber(name:match("^" .. bar.buttonPrefix .. "(%d+)$"))
+        if index and index >= 1 and index <= 12 then
+            local key1, key2 = GetBindingKey(bar.bindingPrefix .. index)
             return key1 or key2
         end
     end
@@ -32,16 +36,11 @@ local function bindingForSlot(slot)
 end
 
 local function findKeyForSpell(spellID)
-    for slot = 1, 96 do
-        local actionType, id = GetActionInfo(slot)
-        if actionType == "spell" and id == spellID then
-            local key = bindingForSlot(slot)
+    if addon.Visuals and type(addon.Visuals.FindButtons) == "function" then
+        for _, button in ipairs(addon.Visuals.FindButtons(spellID)) do
+            local key = bindingForButton(button)
             if key then return key end
         end
-    end
-    if addon.FindActionSlot then
-        local slot = addon:FindActionSlot(spellID)
-        if slot then return bindingForSlot(slot) end
     end
     return nil
 end

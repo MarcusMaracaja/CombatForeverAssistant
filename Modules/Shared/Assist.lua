@@ -30,6 +30,7 @@ local function refreshStatus()
 end
 
 local function updateOverride()
+    if type(InCombatLockdown) == "function" and InCombatLockdown() then return end
     ClearOverrideBindings(frame)
     if isInPvPInstance() then
         if addon.db.assistTabEnabled ~= false then
@@ -44,6 +45,7 @@ end
 
 frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 frame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+frame:RegisterEvent("PLAYER_REGEN_ENABLED")
 frame:SetScript("OnEvent", updateOverride)
 
 local function BuildAssistTab(host)

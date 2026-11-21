@@ -127,9 +127,20 @@ local frame = CreateFrame("Frame", "CombatForeverAssistantCore", UIParent)
 local TICK = 0.2
 local elapsed = 0
 local lastErrorPrint = 0
+local playerUnavailable = false
 
 local function playerCanRun()
     return UnitExists("player") and not UnitIsDeadOrGhost("player")
+end
+
+local function clearPlayerSuggestions()
+    if addon.Visuals then
+        addon.Visuals.flashSpell = nil
+        addon.Visuals.flashUntil = nil
+        addon.Visuals.flashColor = nil
+        if type(addon.Visuals.Hide) == "function" then addon.Visuals.Hide() end
+    end
+    if addon.KeyButton then addon.KeyButton.Hide() end
 end
 
 frame:SetScript("OnEvent", function(_, event, arg1, ...)
@@ -152,6 +163,9 @@ frame:SetScript("OnEvent", function(_, event, arg1, ...)
         if addon.Minimap then addon.Minimap.Refresh() end
     elseif event == "PLAYER_ENTERING_WORLD" then
         if addon.Visuals then addon.Visuals.RefreshMap() end
+    elseif event == "PLAYER_DEAD" then
+        playerUnavailable = true
+        clearPlayerSuggestions()
     elseif event == "SPELLS_CHANGED" or event == "UPDATE_BINDINGS"
         or event == "ACTIONBAR_SLOT_CHANGED" or event == "UPDATE_SHAPESHIFT_FORM" then
         if addon.Visuals then addon.Visuals.RefreshMap() end
@@ -170,6 +184,7 @@ frame:RegisterEvent("SPELLS_CHANGED")
 frame:RegisterEvent("UPDATE_BINDINGS")
 frame:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
 frame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+frame:RegisterEvent("PLAYER_DEAD")
 frame:RegisterEvent("START_AUTOREPEAT_SPELL")
 frame:RegisterEvent("STOP_AUTOREPEAT_SPELL")
 
@@ -233,10 +248,21 @@ local function updateSuggestionDisplay(suggestion, module)
         end
     end
     if addon.KeyButton then
-        if keySuggestion and addon.db.keyButton then
-            addon.KeyButton.ShowFor(keySuggestion.spellID, true)
-        elseif addon.db.keyButton and addon.db.keyButtonAlways then
-            addon.KeyButton.ShowPlaceholder()
+        local keyShown = false
+        if addon.db.keyButton then
+            for _, candidate in ipairs(suggestions) do
+                if type(candidate) == "table" and candidate.kind ~= "item"
+                    and type(candidate.spellID) == "number"
+                    and addon.KeyButton.ShowFor(candidate.spellID, true) then
+                    keyShown = true
+                    break
+                end
+            end
+            if not keyShown and addon.db.keyButtonAlways then
+                addon.KeyButton.ShowPlaceholder()
+            elseif not keyShown then
+                addon.KeyButton.Hide()
+            end
         else
             addon.KeyButton.Hide()
         end
@@ -247,7 +273,12 @@ frame:SetScript("OnUpdate", function(_, delta)
     elapsed = elapsed + delta
     if elapsed < TICK then return end
     elapsed = 0
-    if not playerCanRun() then return end
+    if not playerCanRun() then
+        if not playerUnavailable then clearPlayerSuggestions() end
+        playerUnavailable = true
+        return
+    end
+    playerUnavailable = false
     if not addon.welcomeSent then
         addon.welcomeSent = true
         pcall(addon.PrintWelcome, addon)
@@ -578,20 +609,58 @@ local function cooldownFromInfo(info)
     return 0, duration or 0, true
 end
 
+local function cooldownFromDurationAPI(getter, actionID)
+    local ok, durationObject = pcall(getter, actionID, true)
+    if not ok then return 0, 0, false, false end
+    if durationObject == nil then return 0, 0, true, true end
+
+    local okMethod, getRemaining = pcall(function()
+        return durationObject.GetRemainingDuration
+    end)
+    if not okMethod or type(getRemaining) ~= "function" then return 0, 0, false, false end
+
+    local okRemaining, remaining = pcall(getRemaining, durationObject)
+    if not okRemaining or (_G.issecretvalue and issecretvalue(remaining)) then
+        return 0, 0, false, false
+    end
+    remaining = addon.SafeNumber(remaining, nil)
+    if remaining == nil then return 0, 0, false, false end
+
+    local duration = remaining
+    local okTotalMethod, getTotal = pcall(function()
+        return durationObject.GetTotalDuration
+    end)
+    if okTotalMethod and type(getTotal) == "function" then
+        local okTotal, total = pcall(getTotal, durationObject)
+        if okTotal and not (_G.issecretvalue and issecretvalue(total)) then
+            duration = addon.SafeNumber(total, remaining) or remaining
+        end
+    end
+    return math.max(0, remaining), math.max(0, duration), true, true
+end
+
 function addon.Compat.SpellCooldown(spellID)
     if type(spellID) ~= "number" then return 0, 0, false end
+    if C_Spell and type(C_Spell.GetSpellCooldownDuration) == "function" then
+        local remaining, duration, readable, ignoresGCD =
+            cooldownFromDurationAPI(C_Spell.GetSpellCooldownDuration, spellID)
+        if readable then return remaining, duration, true, ignoresGCD end
+    end
     if C_Spell and type(C_Spell.GetSpellCooldown) == "function" then
         local ok, info = pcall(C_Spell.GetSpellCooldown, spellID)
         if ok then
             local cooldown, duration, readable = cooldownFromInfo(info)
-            if readable then return cooldown, duration, true end
+            if readable then return cooldown, duration, true, false end
         end
     end
     if type(GetSpellCooldown) == "function" then
         local ok, start, duration = pcall(GetSpellCooldown, spellID)
-        if ok then return cooldownFromInfo({ startTime = start, duration = duration }) end
+        if ok then
+            local remaining, total, readable = cooldownFromInfo({ startTime = start, duration = duration })
+            return remaining, total, readable, false
+        end
     end
-    return 0, 0, false
+    return 0, 0, false, false
 end
 
 function addon.Compat.SpellBookItem(i, bookType)
@@ -1001,19 +1070,27 @@ end
 -- Robusto: independe de rank/nome; usa C_ActionBar.GetActionCooldown.
 -- ---------------------------------------------------------------------------
 function addon:ActionCooldown(slot)
-    if not slot then return 0, 0, false end
+    if not slot then return 0, 0, false, false end
+    if C_ActionBar and type(C_ActionBar.GetActionCooldownDuration) == "function" then
+        local remaining, duration, readable, ignoresGCD =
+            cooldownFromDurationAPI(C_ActionBar.GetActionCooldownDuration, slot)
+        if readable then return remaining, duration, true, ignoresGCD end
+    end
     if C_ActionBar and type(C_ActionBar.GetActionCooldown) == "function" then
         local ok, info = pcall(C_ActionBar.GetActionCooldown, slot)
         if ok then
             local cooldown, duration, readable = cooldownFromInfo(info)
-            if readable then return cooldown, duration, true end
+            if readable then return cooldown, duration, true, false end
         end
     end
     if type(GetActionCooldown) == "function" then
         local ok, start, duration = pcall(GetActionCooldown, slot)
-        if ok then return cooldownFromInfo({ startTime = start, duration = duration }) end
+        if ok then
+            local remaining, total, readable = cooldownFromInfo({ startTime = start, duration = duration })
+            return remaining, total, readable, false
+        end
     end
-    return 0, 0, false
+    return 0, 0, false, false
 end
 
 function addon:IsSpellOnCooldown(spellID)
@@ -1037,19 +1114,19 @@ function addon:IsSpellOnCooldown(spellID)
     end
 
     local cooldown, duration, readable, onCooldown = 0, 0, false, false
-    local function considerCooldown(remaining, cooldownDuration, isReadable)
+    local function considerCooldown(remaining, cooldownDuration, isReadable, ignoresGCD)
         if not isReadable then return end
         readable = true
         cooldownDuration = cooldownDuration or 0
-        if remaining <= 0.05 or (cooldownDuration <= 1.5 and remaining <= 1.5) then return end
+        if remaining <= 0.05 or (not ignoresGCD and cooldownDuration <= 1.5 and remaining <= 1.5) then return end
         onCooldown = true
         if remaining > cooldown then
             cooldown, duration = remaining, cooldownDuration
         end
     end
     for _, id in ipairs(ids) do
-        local remaining, spellDuration, spellReadable = addon.Compat.SpellCooldown(id)
-        considerCooldown(remaining, spellDuration, spellReadable)
+        local remaining, spellDuration, spellReadable, ignoresGCD = addon.Compat.SpellCooldown(id)
+        considerCooldown(remaining, spellDuration, spellReadable, ignoresGCD)
     end
 
     local seenSlots = {}
@@ -1057,8 +1134,8 @@ function addon:IsSpellOnCooldown(spellID)
         local slot = addon:FindActionSlot(id)
         if slot and not seenSlots[slot] then
             seenSlots[slot] = true
-            local remaining, actionDuration, actionReadable = addon:ActionCooldown(slot)
-            considerCooldown(remaining, actionDuration, actionReadable)
+            local remaining, actionDuration, actionReadable, ignoresGCD = addon:ActionCooldown(slot)
+            considerCooldown(remaining, actionDuration, actionReadable, ignoresGCD)
         end
     end
 

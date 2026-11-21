@@ -645,6 +645,10 @@ function module:TryFlash(spellID, color, condition, name, env, opts)
         addon:DebugPrint("tryflash", tostring(name or spellID), "BLOQUEADO: nome da spell não resolvido")
         return false
     end
+    if knownID == 3045 and module.IsRapidFireSuppressed() then
+        addon:DebugPrint("tryflash", tostring(name or spellID), "BLOQUEADO: Rapid Fire ativo/em cooldown")
+        return false
+    end
     if module.IsPressSuppressed(spellName) then
         addon:DebugPrint("tryflash", tostring(name or spellID), "BLOQUEADO: botão pressionado agora")
         return false

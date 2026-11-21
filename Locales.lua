@@ -58,7 +58,7 @@ local strings = {
     ["minimap_hidden"]          = { en = "Minimap button hidden.", pt = "Botao do minimapa oculto." },
 
     -- About
-    ["about_body"]              = { en = "Combat Forever Assistant highlights the ability you should press next, based on your spec, talents, target, mana, range and combat state.\n\nIt never presses keys or casts for you.\n\nAvailable modules: Hunter and Shaman.\n\nCreated by Marcus, with Inkling 2 Small Free (OpenCode) as technology partner.", pt = "O Combat Forever Assistant destaca (/cfa) a habilidade que voce deveria usar a seguir, com base na spec, talentos, alvo, mana, alcance e estado de combate.\n\nEle nunca aperta a tecla nem conjura por voce.\n\nModulos disponiveis: Hunter e Shaman.\n\nCriado por Marcus, com Inkling 2 Small Free (OpenCode) como parceiro de tecnologia." },
+    ["about_body"]              = { en = "Combat Forever Assistant highlights the ability you should press next, based on your spec, talents, target, mana, range and combat state.\n\nIt never presses keys or casts for you.\n\nAvailable modules: Hunter, Shaman and Druid.\n\nCreated by Marcus, with Inkling 2 Small Free (OpenCode) as technology partner.", pt = "O Combat Forever Assistant destaca (/cfa) a habilidade que voce deveria usar a seguir, com base na spec, talentos, alvo, mana, alcance e estado de combate.\n\nEle nunca aperta a tecla nem conjura por voce.\n\nModulos disponiveis: Hunter, Shaman e Druida.\n\nCriado por Marcus, com Inkling 2 Small Free (OpenCode) como parceiro de tecnologia." },
     ["about_version"]           = { en = "Version", pt = "Versao" },
 
     -- Equipment recommendations
@@ -108,6 +108,21 @@ local strings = {
     ["shaman_buff_windfury"]    = { en = "Windfury Weapon (Enhancement)", pt = "Arma Windfury (Enhancement)" },
     ["shaman_buff_strength"]    = { en = "Strength of Earth Totem (group support)", pt = "Totem Forca da Terra (suporte ao grupo)" },
     ["shaman_buff_mana_spring"] = { en = "Mana Spring Totem (pre-combat / low mana / long fight)", pt = "Totem Fonte de Mana (pre-combate / pouca mana / luta longa)" },
+    ["druid_tab"] = { en = "Druid", pt = "Druida" },
+    ["druid_enabled"] = { en = "Enable Druid recommendations", pt = "Ativar recomendações do Druida" },
+    ["druid_spec_header"] = { en = "Talent specialization", pt = "Especialização de talentos" },
+    ["druid_spec_auto"] = { en = "Automatic", pt = "Automático" },
+    ["druid_spec_balance"] = { en = "Balance", pt = "Equilíbrio" },
+    ["druid_spec_feral"] = { en = "Feral", pt = "Feral" },
+    ["druid_spec_restoration"] = { en = "Restoration", pt = "Restauração" },
+    ["druid_feral_form"] = { en = "Feral form preference", pt = "Forma preferida para Feral" },
+    ["druid_feral_cat"] = { en = "Cat (damage)", pt = "Gato (dano)" },
+    ["druid_feral_bear"] = { en = "Bear (tank)", pt = "Urso (tanque)" },
+    ["druid_rotation_hint"] = { en = "Balance, Feral Cat, Feral Bear and Restoration have separate priorities. Healing suggestions apply only to yourself or your selected friendly target; CFA never chooses a target.", pt = "Equilíbrio, Feral Gato, Feral Urso e Restauração têm prioridades separadas. Curas são sugeridas apenas para você ou para o aliado selecionado; o CFA não escolhe alvos." },
+    ["druid_extra_header"] = { en = "Extra — long-duration buffs", pt = "Extra — buffs de longa duração" },
+    ["druid_extra_hint"] = { en = "Enabled buffs are suggested before the normal rotation until detected as active.", pt = "Os buffs ativados são sugeridos antes da rotação até serem reconhecidos como ativos." },
+    ["druid_extra_mark"] = { en = "Mark of the Wild / Gift of the Wild", pt = "Marca do Indomado / Dom da Natureza" },
+    ["druid_extra_thorns"] = { en = "Thorns", pt = "Espinhos" },
     ["assist_tab"] = { en = "Tab Assistant", pt = "Tab Assistant" },
     ["assist_title"] = { en = "Smart target selection", pt = "Seleção inteligente de alvos" },
     ["assist_nearest_enabled"] = { en = "TAB: target the nearest enemy player in PvP instances", pt = "TAB: mirar no jogador inimigo mais próximo em instâncias PvP" },
