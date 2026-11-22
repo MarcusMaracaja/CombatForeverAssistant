@@ -1143,6 +1143,70 @@ function addon:IsSpellOnCooldown(spellID)
 end
 
 -- ---------------------------------------------------------------------------
+-- IsSpellOnCD — função booleana pura: verdadeira se a spell estiver em cooldown.
+-- Não depende do campo "readable" (valores secretos no cliente Forever fazem
+-- o IsSpellOnCooldown retornar false durante o combate). Usar esta função em
+-- todos os gates de recomendação para nunca sugerir skill em cooldown.
+-- ---------------------------------------------------------------------------
+function addon:IsSpellOnCD(spellID)
+    if type(spellID) ~= "number" then return false end
+    local knownID = addon.Compat and addon.Compat.ResolveKnownID
+        and addon.Compat.ResolveKnownID(spellID) or spellID
+    local ids = {knownID, spellID}
+    local families = addon.Compat and addon.Compat.FamilyOf
+    local family = families and (families[knownID] or families[spellID])
+    if family then
+        for _, id in ipairs(family) do
+            table.insert(ids, id)
+        end
+    end
+    local now = addon.SafeNumber(GetTime(), 0)
+    for _, id in ipairs(ids) do
+        -- C_Spell.GetSpellCooldownDuration (objeto com GetRemainingDuration)
+        if C_Spell and type(C_Spell.GetSpellCooldownDuration) == "function" then
+            local ok, obj = pcall(C_Spell.GetSpellCooldownDuration, id, true)
+            if ok and obj and type(obj.GetRemainingDuration) == "function" then
+                local ok2, remaining = pcall(obj.GetRemainingDuration, obj)
+                remaining = addon.SafeNumber(remaining, nil)
+                if ok2 and type(remaining) == "number" and remaining > 0.5 then
+                    return true
+                end
+            end
+        end
+        -- C_Spell.GetSpellCooldown (tabela startTime/duration/isActive)
+        if C_Spell and type(C_Spell.GetSpellCooldown) == "function" then
+            local ok, info = pcall(C_Spell.GetSpellCooldown, id)
+            if ok and type(info) == "table" then
+                local start = addon.SafeNumber(info.startTime or info.cooldownStartTime or 0, 0)
+                local dur = addon.SafeNumber(info.duration or info.cooldownDuration or 0, 0)
+                local active = info.isActive
+                -- Se o cliente reporta isActive=true, a spell está em cooldown
+                -- mesmo que startTime/duration sejam secretos no Forever.
+                if active == true then
+                    return true
+                end
+                if type(start) == "number" and type(dur) == "number" and dur > 1.5 then
+                    local timeLeft = start + dur - now
+                    if timeLeft > 0.5 then return true end
+                end
+            end
+        end
+        -- GetSpellCooldown legado (start, duration)
+        if type(GetSpellCooldown) == "function" then
+            local ok, start, duration = pcall(GetSpellCooldown, id)
+            start = addon.SafeNumber(start, 0)
+            duration = addon.SafeNumber(duration, 0)
+            if ok and type(start) == "number" and type(duration) == "number"
+               and duration > 1.5 then
+                local timeLeft = start + duration - now
+                if timeLeft > 0.5 then return true end
+            end
+        end
+    end
+    return false
+end
+
+-- ---------------------------------------------------------------------------
 -- IsSpellInRangeEx — alcance estrito (true/false/nil). Nil = desconhecido,
 -- nunca interpretado como "em alcance" (evita o bug de todo alvo parecer
 -- melee quando a API é secreta).
@@ -1378,9 +1442,11 @@ function addon:CheckIfSpellCastable(z)
         end
     end
 
-    if onCooldown then
-        return fail(string.format("em cooldown (%.1fs de %.1fs)",
-            tonumber(cooldown) or 0, tonumber(duration) or 0))
+    -- Usa a função booleana IsSpellOnCD, que não depende de "readable"
+    -- (valores secretos no cliente Forever fazem IsSpellOnCooldown retornar
+    -- false durante o combate, deixando skills em cooldown serem recomendadas).
+    if addon:IsSpellOnCD(knownID or spellID) then
+        return fail("em cooldown")
     end
 
     local notIfActiveOk = true
@@ -1640,11 +1706,14 @@ function addon:RunDeclaredRotation(module, specKey, env)
                         "condOK=true", "enabled=ok")
                 end
                 local knownID = addon.Compat.HighestKnownSpellID(node.spellID) or node.spellID
-                if module:TryFlash(knownID, node.color, function() return true end, node.name, env, node.opts) then
+                if module:TryFlash(knownID, node.color, function() return true end, node.name, env, node.opts, node.passthrough) then
                     if addon.debugMode then
                         addon:DebugPrint("   -> SUGERIDO", tostring(node.id), tostring(knownID))
                     end
                     if not node.passthrough then return true end
+                    -- Nós com passthrough (ex: Chute de Moa) não travam
+                    -- as próximas habilidades na mesma rotação deste tick.
+                    module.TickFlashUsed = nil
                 end
             end
         end
@@ -1779,6 +1848,42 @@ SlashCmdList["COMBATFOREVERASSISTANT"] = function(msg)
         addon.db.minimapHidden = not addon.db.minimapHidden
         if addon.Minimap then addon.Minimap.Refresh() end
         print(addon.db.minimapHidden and L["minimap_hidden"] or L["minimap_shown"])
+    elseif msg == "cd" then
+        local id = 1317257
+        local n = nil
+        if C_Spell and type(C_Spell.GetSpellInfo) == "function" then
+            local ok, info = pcall(C_Spell.GetSpellInfo, id)
+            if ok and type(info) == "table" then n = info.name end
+        end
+        print("|cff44ddff[CFA cd]|r Chute de Moa (1317257):")
+        print("  Nome:", tostring(n))
+        if C_Spell and C_Spell.GetSpellCooldownDuration then
+            local ok, obj = pcall(C_Spell.GetSpellCooldownDuration, id, true)
+            print("  GetSpellCooldownDuration ok=", tostring(ok), "tipo=", type(obj))
+            if obj and obj.GetRemainingDuration then
+                local ok2, rem = pcall(obj.GetRemainingDuration, obj)
+                print("  Remaining=", tostring(rem))
+            end
+        end
+        if C_Spell and C_Spell.GetSpellCooldown then
+            local ok, info = pcall(C_Spell.GetSpellCooldown, id)
+            print("  GetSpellCooldown ok=", tostring(ok))
+            if ok and type(info) == "table" then
+                print("  startTime=", tostring(info.startTime), "duration=", tostring(info.duration), "isActive=", tostring(info.isActive))
+            end
+        end
+        if IsSpellKnown then
+            print("  IsSpellKnown=", tostring(IsSpellKnown(id)))
+        end
+        if C_SpellBook and C_SpellBook.IsSpellKnownOrInSpellBook then
+            local ok2, known = pcall(C_SpellBook.IsSpellKnownOrInSpellBook, id)
+            print("  IsSpellKnownOrInSpellBook=", tostring(known))
+        end
+        if CFA and CFA.IsSpellOnCooldown then
+            local onCd, rem, dur, readable = CFA:IsSpellOnCooldown(id)
+            print("  CFA:IsSpellOnCooldown -> onCd=", tostring(onCd), "remaining=", tostring(rem), "duration=", tostring(dur), "readable=", tostring(readable))
+        end
+        print("|cff44ddff[CFA cd]|r fim")
     else
         print(L["slash_help"])
     end

@@ -622,22 +622,28 @@ module.TickFlashUsed = nil
 module.PendingSuggestion = nil
 module.PendingAspectSuggestion = nil
 
-function module:Suggest(spellID, color)
+function module:Suggest(spellID, color, asAdditional)
     if module.TickFlashUsed then return false end
     module.TickFlashUsed = true
     local knownID = module.Compat and module.Compat.HighestKnownSpellID and module.Compat.HighestKnownSpellID(spellID) or spellID
     local suggestion = { spellID = knownID or spellID, color = color or "Utility" }
-    local aspect = module.PendingAspectSuggestion
-    if aspect and aspect.spellID ~= suggestion.spellID then
-        aspect.additional = { suggestion }
-        module.PendingSuggestion = aspect
+    if asAdditional and module.PendingSuggestion then
+        -- Adiciona como sugestão adicional (ex: Chute de Moa junto com dano principal)
+        module.PendingSuggestion.additional = module.PendingSuggestion.additional or {}
+        table.insert(module.PendingSuggestion.additional, suggestion)
     else
-        module.PendingSuggestion = suggestion
+        local aspect = module.PendingAspectSuggestion
+        if aspect and aspect.spellID ~= suggestion.spellID then
+            aspect.additional = { suggestion }
+            module.PendingSuggestion = aspect
+        else
+            module.PendingSuggestion = suggestion
+        end
     end
     return true
 end
 
-function module:TryFlash(spellID, color, condition, name, env, opts)
+function module:TryFlash(spellID, color, condition, name, env, opts, asAdditional)
     if module.TickFlashUsed then return false end
     local knownID = module.Compat and module.Compat.HighestKnownSpellID and module.Compat.HighestKnownSpellID(spellID) or spellID
     local spellName = module.SpellName(knownID or spellID)
@@ -675,7 +681,7 @@ function module:TryFlash(spellID, color, condition, name, env, opts)
         return false
     end
     addon:DebugPrint("tryflash", tostring(name or spellID), "OK (sugere)")
-    return module:Suggest(knownID or spellID, color)
+    return module:Suggest(knownID or spellID, color, asAdditional)
 end
 
 function module:GetSuggestion()

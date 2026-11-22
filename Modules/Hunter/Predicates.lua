@@ -96,6 +96,14 @@ P["melee_or_close"] = {
 P["melee_only"] = {
     fn = function(env) return hasActiveEnemy(env) and env.isMelee and true or false end,
 }
+-- Trap de curta distância: aceita quando o alvo está em melee/perto,
+-- mesmo sem medição exata de distância (targetDistance pode ser nil).
+P["trap_melee_or_close"] = {
+    fn = function(env)
+        if not hasActiveEnemy(env) then return false end
+        return env.isMelee or env.tooCloseForRanged
+    end,
+}
 P["dead_zone_not_melee"] = {
     -- Zona morta do Hunter (5-10 yd): Disengage.
     -- env.isDeadZone é o dado explícito (distância medida ou sondagem
@@ -159,6 +167,7 @@ local LABELS = {
     no_any_sting                = LBL("Sem nenhuma Sting", "No Sting active"),
     melee_or_close              = LBL("Melee/perto", "Melee/close"),
     melee_only                  = LBL("Melee real", "Actual melee range"),
+    trap_melee_or_close         = LBL("Trap curta distância", "Trap close range"),
     dead_zone_not_melee         = LBL("Zona morta", "Dead zone"),
     pvp_not_clipped_melee       = LBL("PvP melee, sem Wing Clip", "PvP melee, no Wing Clip"),
     melee_enemy_interruptible   = LBL("Melee, alvo conjurando", "Melee, target casting"),
