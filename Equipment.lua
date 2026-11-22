@@ -83,6 +83,27 @@ local function containerItemID(bag, slot)
     return nil
 end
 
+-- Verifica se um item está em cooldown. Usa C_Item.GetItemCooldown (moderna)
+-- com fallback para GetItemCooldown (legada). Retorna true se estiver em CD.
+local function itemIsOnCooldown(itemID)
+    if type(itemID) ~= "number" then return false end
+    local start, duration, enable = 0, 0, 1
+    if C_Item and type(C_Item.GetItemCooldown) == "function" then
+        local ok, s, d, e = pcall(C_Item.GetItemCooldown, itemID)
+        if ok then start, duration, enable = s, d, e end
+    elseif type(GetItemCooldown) == "function" then
+        local ok, s, d, e = pcall(GetItemCooldown, itemID)
+        if ok then start, duration, enable = s, d, e end
+    end
+    if enable == 0 then return false end -- item não pode ser usado
+    local now = GetTime() or 0
+    if type(start) == "number" and type(duration) == "number" and duration > 0 then
+        local remaining = start + duration - now
+        if remaining > 0.5 then return true end
+    end
+    return false
+end
+
 local function containerSlotCount(bag)
     local container = C_Container
     local getter = container and container.GetContainerNumSlots or GetContainerNumSlots
@@ -232,12 +253,18 @@ function Equipment.GetSuggestions(module)
     local suggestions = {}
     for _, candidate in ipairs(candidates) do
         if addon.NodeConditionPass(module, env, candidate.rule, true) then
+            -- Não sugere item se estiver em cooldown (ex: trinket já usado)
+            if itemIsOnCooldown(candidate.itemID) then
+                addon:DebugPrint("equipment: item", candidate.itemID, "em cooldown, ignorado")
+                goto continue
+            end
             suggestions[#suggestions + 1] = {
                 kind = "item",
                 itemID = candidate.itemID,
                 color = "Utility",
             }
         end
+        ::continue::
     end
     return suggestions
 end
