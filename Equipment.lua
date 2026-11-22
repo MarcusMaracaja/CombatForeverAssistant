@@ -254,17 +254,14 @@ function Equipment.GetSuggestions(module)
     for _, candidate in ipairs(candidates) do
         if addon.NodeConditionPass(module, env, candidate.rule, true) then
             -- Não sugere item se estiver em cooldown (ex: trinket já usado)
-            if itemIsOnCooldown(candidate.itemID) then
-                addon:DebugPrint("equipment: item", candidate.itemID, "em cooldown, ignorado")
-                goto continue
+            if not itemIsOnCooldown(candidate.itemID) then
+                suggestions[#suggestions + 1] = {
+                    kind = "item",
+                    itemID = candidate.itemID,
+                    color = "Utility",
+                }
             end
-            suggestions[#suggestions + 1] = {
-                kind = "item",
-                itemID = candidate.itemID,
-                color = "Utility",
-            }
         end
-        ::continue::
     end
     return suggestions
 end

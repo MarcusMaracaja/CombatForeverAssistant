@@ -211,16 +211,48 @@ local function talentTreePoints()
     return nil
 end
 
+local TREE_ORDER_DRUID = { "BAL", "FER", "REST" }
+
+-- Conta pontos de talento por árvore, igual ao método do Hunter.
+-- Itera treeIDs do C_Traits e soma os ranks comprados de cada nó.
+local function talentTreePointsByOrdinal()
+    if not (C_ClassTalents and C_Traits) then return false end
+    local okCfg, cfg = pcall(C_ClassTalents.GetActiveConfigID)
+    if not okCfg or not cfg then return false end
+    local okInfo, info = pcall(C_Traits.GetConfigInfo, cfg)
+    if not okInfo or type(info) ~= "table" or type(info.treeIDs) ~= "table" then return false end
+    local counts = {}
+    for idx, treeID in ipairs(info.treeIDs) do
+        local specKey = TREE_ORDER_DRUID[idx]
+        if specKey then
+            local okN, nodes = pcall(C_Traits.GetTreeNodes, treeID)
+            local total = 0
+            if type(nodes) == "table" then
+                for _, nodeID in ipairs(nodes) do
+                    local okNI, ni = pcall(C_Traits.GetNodeInfo, cfg, nodeID)
+                    if okNI and type(ni) == "table" then
+                        total = total + (safeNumber(ni.currentRank)
+                            or safeNumber(ni.ranksPurchased)
+                            or safeNumber(ni.activeRank) or 0)
+                    end
+                end
+            end
+            counts[specKey] = total
+        end
+    end
+    return counts
+end
+
 local function detectedTalentSpec()
     local override = addon.charDb.druidSpec
     if override == "BAL" or override == "FER" or override == "REST" then
         return override, "override"
     end
 
-    local counts = talentTreePoints()
+    local counts = talentTreePointsByOrdinal()
     if counts then
         local selected, best, hasPoints = "BAL", 0, false
-        for _, specKey in ipairs(SPEC_ORDER) do
+        for _, specKey in ipairs(TREE_ORDER_DRUID) do
             local points = counts[specKey] or 0
             if points > best then selected, best = specKey, points end
             if points > 0 then hasPoints = true end
@@ -231,6 +263,7 @@ local function detectedTalentSpec()
         end
     end
 
+    -- Fallback por signature spells
     if Compat.SpellKnown(24858) then return "BAL", "talent signature" end
     if Compat.SpellKnown(18562) or Compat.SpellKnown(33891) or Compat.SpellKnown(65139) then
         return "REST", "talent signature"
