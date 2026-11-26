@@ -1,320 +1,70 @@
-local addonName, addon = ...
+-- Combat Forever Assistant — Shaman module: main rotation hub (rebuilt cleanly).
+-- Uses global helpers from Shared/Functions.lua and Core.lua:
+--   - Spec detection via Core:RegisterSpecDetection / Core:DetectSpec
+--   - Character resources via addon.PopulateEnvResources / addon.HasManaPct
+--   - Castability & cooldowns via addon.CheckCastable / Core:RunDeclaredRotation
+--   - Rotation editor via addon.RotationEditor.Attach (ELE / ENH / REST + Extra tab)
+--   - Weapon imbues detected via GetWeaponEnchantInfo() (not auras!)
+-- Focuses on DPS rotations (Elemental, Enhancement, Restoration DPS fallback);
+-- dedicated healer logic will be added in a future healer phase.
+local _, addon = ...
 
-local module = {
-    classTag = "SHAMAN",
-    RotationPredicates = {},
-    RotationSpecs = {},
-    buffBeliefs = {},
-}
+local Shaman = addon.modules.SHAMAN
 local L = addon.L
-local Compat = addon.Compat
-local TREE_ORDER = { "ELE", "ENH", "REST" }
+
 local EXTRA_KEYS = {
-    lightning_shield = true,
+    lightning_shield   = true,
+    water_shield       = true,
     flametongue_weapon = true,
-    windfury_weapon = true,
-    strength_of_earth = true,
-    mana_spring = true,
+    windfury_weapon    = true,
+    strength_of_earth  = true,
+    air_totem          = true,
+    mana_spring        = true,
 }
-local MAELSTROM_AURAS = { [408498] = true, [408505] = true }
-local talentCache
-local lastTalentAttempt = 0
+
 local combatStartedAt
-local flameShockBelief
-
-addon.modules.SHAMAN = module
-module.addon = addon
-module.Compat = Compat
-
-local function isSecret(value)
-    if type(_G.issecretvalue) ~= "function" then return false end
-    local ok, secret = pcall(_G.issecretvalue, value)
-    return ok and secret == true
-end
-
-local function numberValue(value)
-    if type(value) ~= "number" or isSecret(value) or value ~= value
-        or value == math.huge or value == -math.huge then
-        return nil
-    end
-    return value
-end
 
 local function now()
     if type(GetTime) ~= "function" then return 0 end
-    local ok, value = pcall(GetTime)
-    return ok and numberValue(value) or 0
-end
-
-local function percentage(unit, valueFunc, maxFunc)
-    if type(valueFunc) ~= "function" or type(maxFunc) ~= "function" then return 0 end
-    local okValue, value = pcall(valueFunc, unit, 0)
-    local okMax, maximum = pcall(maxFunc, unit, 0)
-    value, maximum = okValue and numberValue(value) or nil, okMax and numberValue(maximum) or nil
-    if not value or not maximum or maximum <= 0 then return 0 end
-    return math.max(0, math.min(100, value / maximum * 100))
-end
-
-local function classifyTree(name)
-    if type(name) ~= "string" or isSecret(name) then return nil end
-    name = name:lower()
-    if name:find("element", 1, true) or name:find("elementar", 1, true) then return "ELE" end
-    if name:find("enhanc", 1, true) or name:find("aperfe", 1, true) then return "ENH" end
-    if name:find("restor", 1, true) or name:find("restaur", 1, true) or name:find("heal", 1, true) then
-        return "REST"
-    end
-    return nil
-end
-
-local function invalidateTalentCache()
-    talentCache = nil
-    lastTalentAttempt = 0
-end
-
-local function talentPoints()
-    if talentCache then return talentCache end
-    local timestamp = now()
-    if timestamp - lastTalentAttempt < 2 then return nil end
-    lastTalentAttempt = timestamp
-    if not (C_ClassTalents and C_Traits and C_ClassTalents.GetActiveConfigID
-        and C_Traits.GetConfigInfo and C_Traits.GetTreeNodes and C_Traits.GetNodeInfo) then
-        return nil
-    end
-
-    local okConfig, configID = pcall(C_ClassTalents.GetActiveConfigID)
-    if not okConfig or type(configID) ~= "number" or isSecret(configID) then return nil end
-    local okInfo, configInfo = pcall(C_Traits.GetConfigInfo, configID)
-    if not okInfo or type(configInfo) ~= "table" or type(configInfo.treeIDs) ~= "table" then return nil end
-
-    local counts = {}
-    for index, treeID in ipairs(configInfo.treeIDs) do
-        local specKey
-        if C_Traits.GetTreeInfo then
-            local okTree, treeInfo = pcall(C_Traits.GetTreeInfo, configID, treeID)
-            if okTree and type(treeInfo) == "table" then
-                specKey = classifyTree(treeInfo.displayName or treeInfo.name)
-            end
-        end
-        specKey = specKey or TREE_ORDER[index]
-        if specKey then
-            local okNodes, nodeIDs = pcall(C_Traits.GetTreeNodes, treeID)
-            local total = 0
-            if okNodes and type(nodeIDs) == "table" then
-                for _, nodeID in ipairs(nodeIDs) do
-                    local okNode, nodeInfo = pcall(C_Traits.GetNodeInfo, configID, nodeID)
-                    if okNode and type(nodeInfo) == "table" then
-                        local rank = numberValue(nodeInfo.currentRank)
-                            or numberValue(nodeInfo.ranksPurchased)
-                            or numberValue(nodeInfo.activeRank)
-                        total = total + (rank or 0)
-                    end
-                end
-            end
-            counts[specKey] = (counts[specKey] or 0) + total
-        end
-    end
-    if next(counts) then
-        talentCache = counts
-        return counts
-    end
-    return nil
-end
-
-function module:SetSpecOverride(specKey)
-    if specKey == "auto" then
-        addon.charDb.shamanSpec = nil
-        return true
-    end
-    if specKey ~= "ELE" and specKey ~= "ENH" and specKey ~= "REST" then return false end
-    addon.charDb.shamanSpec = specKey
-    return true
-end
-
-function module:DetectSpec()
-    -- Pipeline global: override -> talentos (C_Traits ordinal) -> signatures -> default.
-    return addon:DetectSpec(self)
-end
-
-function module:IsExtraSuggestionEnabled(key)
-    if not EXTRA_KEYS[key] then return false end
-    local settings = addon.charDb.shamanExtras
-    return type(settings) ~= "table" or settings[key] ~= false
-end
-
-function module:SetExtraSuggestionEnabled(key, enabled)
-    if not EXTRA_KEYS[key] or type(enabled) ~= "boolean" then return false end
-    if type(addon.charDb.shamanExtras) ~= "table" then
-        addon.charDb.shamanExtras = {}
-    end
-    local settings = addon.charDb.shamanExtras
-    if enabled then
-        settings[key] = nil
-        if not next(settings) then addon.charDb.shamanExtras = nil end
-    else
-        settings[key] = false
-    end
-    return true
-end
-
-local function sameFamily(spellID, familyBase)
-    if spellID == familyBase then return true end
-    local families = Compat.FamilyOf
-    return families and families[spellID] ~= nil and families[spellID] == families[familyBase]
-end
-
-local function spellName(spellID)
-    local knownID = Compat.HighestKnownSpellID(spellID) or spellID
-    return Compat.SpellName(knownID) or Compat.SpellName(spellID)
-end
-
-local function buffActive(spellID, beliefKey, requirePlayerSource, auraFamily)
-    local status
-    if auraFamily and addon.BuffLib and addon.BuffLib.Status then
-        local ok, result = pcall(addon.BuffLib.Status, addon.BuffLib, "player", auraFamily)
-        if ok and type(result) == "table" then
-            status = result
-            if status.present then return true end
-        end
-    end
-    local name = spellName(spellID)
-    local mine = requirePlayerSource ~= false
-    if auraFamily then mine = false end
-    if name and Compat.CheckBuff and Compat.CheckBuff(name, "player", mine) then
-        return true
-    end
-    local belief = module.buffBeliefs[beliefKey]
-    if status and status.readable then
-        if type(belief) == "table" and type(belief.appliedAt) == "number"
-            and now() - belief.appliedAt < 2 then
-            return true
-        end
-        module.buffBeliefs[beliefKey] = nil
-        return false
-    end
-    local expires = type(belief) == "table" and belief.expires or belief
-    if type(belief) == "table" and expires == nil then return true end
-    return expires ~= nil and now() < expires
-end
-
-local function normalizedName(name)
-    if type(name) ~= "string" or isSecret(name) then return nil end
-    return name:lower():gsub("%s*%b()%s*$", ""):gsub("^%s+", ""):gsub("%s+$", "")
-end
-
-local function totemActive(spellID)
-    if type(GetTotemInfo) ~= "function" then return false end
-    local names = {}
-    local family = Compat.FamilyOf[spellID] or { spellID }
-    for _, id in ipairs(family) do
-        local name = spellName(id)
-        local normalized = normalizedName(name)
-        if normalized then names[normalized] = true end
-    end
-    if not next(names) then return false end
-    for slot = 1, 4 do
-        local ok, haveTotem, currentName = pcall(GetTotemInfo, slot)
-        if ok and not isSecret(haveTotem) and (haveTotem == true or haveTotem == 1) then
-            local current = normalizedName(currentName)
-            if current then
-                for wanted in pairs(names) do
-                    if current == wanted or current:find(wanted, 1, true) then return true end
-                end
-            end
-        end
-    end
-    return false
-end
-
-local function flameShockActive()
-    local name = spellName(8050)
-    if name and Compat.CheckDebuff and Compat.CheckDebuff(name, "target", true) then return true end
-    local targetGUID
-    if type(UnitGUID) == "function" then
-        local ok, guid = pcall(UnitGUID, "target")
-        if ok and type(guid) == "string" and not isSecret(guid) then targetGUID = guid end
-    end
-    return flameShockBelief ~= nil and targetGUID ~= nil
-        and flameShockBelief.guid == targetGUID and now() < flameShockBelief.expires
-end
-
-local function clearcastingActive()
-    local name = spellName(16246)
-    return name ~= nil and Compat.CheckBuff and Compat.CheckBuff(name, "player", true) or false
-end
-
-local function lightningMasteryActive()
-    return buffActive(16166, "lightning_mastery")
-end
-
-local function maelstromStacks()
-    if not (C_UnitAuras and type(C_UnitAuras.GetAuraDataByIndex) == "function") then return 0 end
-    for index = 1, 40 do
-        local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, "player", index, "HELPFUL")
-        if not ok or not aura then break end
-        local okID, spellID = pcall(function() return aura.spellId end)
-        if okID and type(spellID) == "number" and not isSecret(spellID) and MAELSTROM_AURAS[spellID] then
-            local okStacks, stacks = pcall(function() return aura.applications end)
-            local count = okStacks and numberValue(stacks) or nil
-            return count or 1
-        end
-    end
-    return 0
-end
-
-local function isTargetInterruptible()
-    local okExists, exists = pcall(UnitExists, "target")
-    if not okExists or not exists then return false end
-    if type(UnitCastingInfo) == "function" then
-        local ok, name, _, _, _, _, _, _, notInterruptible = pcall(UnitCastingInfo, "target")
-        if ok and type(name) == "string" and name ~= "" and not isSecret(name)
-            and not isSecret(notInterruptible) then
-            return notInterruptible ~= true
-        end
-    end
-    if type(UnitChannelInfo) == "function" then
-        local ok, name, _, _, _, _, _, notInterruptible = pcall(UnitChannelInfo, "target")
-        if ok and type(name) == "string" and name ~= "" and not isSecret(name)
-            and not isSecret(notInterruptible) then
-            return notInterruptible ~= true
-        end
-    end
-    return false
+    local ok, t = pcall(GetTime)
+    return ok and addon.SafeNumber(t, 0) or 0
 end
 
 local function playerInCombat()
     if type(UnitAffectingCombat) == "function" then
-        local ok, value = pcall(UnitAffectingCombat, "player")
-        if ok and not isSecret(value) then return value == true end
+        local ok, v = pcall(UnitAffectingCombat, "player")
+        local b = ok and addon.SafeBoolean and addon.SafeBoolean(v, nil)
+        if b ~= nil then return b end
     end
     if type(InCombatLockdown) == "function" then
-        local ok, value = pcall(InCombatLockdown)
-        return ok and not isSecret(value) and value == true or false
+        local ok, v = pcall(InCombatLockdown)
+        local b = ok and addon.SafeBoolean and addon.SafeBoolean(v, nil)
+        if b ~= nil then return b end
     end
     return false
 end
 
 local function playerMoving()
     if type(GetUnitSpeed) == "function" then
-        local ok, speed = pcall(GetUnitSpeed, "player")
-        speed = ok and numberValue(speed) or nil
-        if speed then return speed > 0 end
+        local ok, s = pcall(GetUnitSpeed, "player")
+        local speed = ok and addon.SafeNumber(s, nil) or nil
+        if speed ~= nil then return speed > 0 end
     end
     if type(IsPlayerMoving) == "function" then
-        local ok, moving = pcall(IsPlayerMoving)
-        return ok and not isSecret(moving) and moving == true or false
+        local ok, m = pcall(IsPlayerMoving)
+        local b = ok and addon.SafeBoolean and addon.SafeBoolean(m, nil)
+        if b ~= nil then return b end
     end
     return false
 end
 
-local function enemyCount(hasEnemy)
+local function countActiveEnemies(hasEnemy)
     local count = 0
     if C_NamePlate and type(C_NamePlate.EnumerateUnits) == "function" then
         local ok, units = pcall(function() return { C_NamePlate.EnumerateUnits() } end)
         if ok and type(units) == "table" then
             for _, unit in ipairs(units) do
-                local okExists, exists = pcall(UnitExists, unit)
-                local okAttack, canAttack = pcall(UnitCanAttack, "player", unit)
-                if okExists and exists and okAttack and not isSecret(canAttack) and canAttack == true then
+                if addon.Enemy and addon:Enemy(unit) then
                     count = count + 1
                 end
             end
@@ -324,377 +74,479 @@ local function enemyCount(hasEnemy)
     return count
 end
 
-local function targetMeleeRange(distance)
+local function resolveMeleeRange(distance)
     if distance ~= nil then return distance <= 5 end
-    local attackSlot = addon:FindActionSlot(6603)
-    local attackRange = addon:ActionSlotRange(attackSlot, "target")
-    if attackRange ~= nil then return attackRange end
-    local stormstrikeID = Compat.HighestKnownSpellID(17364) or 17364
-    return addon:IsSpellInRangeEx(stormstrikeID, "target")
-end
-
-function module:BuildEnv(specKey)
-    local hasEnemy = addon:Enemy("target") == true
-    local distance = addon:TargetDistance("target")
-    local melee = targetMeleeRange(distance)
-    local inCombat = playerInCombat()
-    local timeInCombat = inCombat and combatStartedAt and math.max(0, now() - combatStartedAt) or 0
-    local enemies = enemyCount(hasEnemy)
-    local manaPct = percentage("player", UnitPower, UnitPowerMax)
-    local env = {
-        spec = specKey,
-        hasActiveEnemy = hasEnemy,
-        inCombat = inCombat,
-        isMelee = melee,
-        targetDistance = distance,
-        tooCloseForRanged = melee == true,
-        targetInterruptible = hasEnemy and isTargetInterruptible() or false,
-        isMoving = playerMoving(),
-        isAoE = enemies >= 2,
-        enemies = enemies,
-        manaPct = manaPct,
-        combatTime = timeInCombat,
-    }
-    env.searingTotemActive = totemActive(3599)
-    env.magmaTotemActive = totemActive(8190)
-    env.fireTotemActive = env.searingTotemActive or env.magmaTotemActive
-    return env
-end
-
-local P = module.RotationPredicates
-P.has_enemy = { label = "Attackable target", fn = function(env) return env.hasActiveEnemy end }
-P.enemy_casting = { label = "Interruptible enemy cast", fn = function(env) return env.targetInterruptible end }
-P.in_combat_enemy = {
-    label = "In combat with an enemy",
-    fn = function(env) return env.inCombat and env.hasActiveEnemy end,
-}
-P.melee_combat = {
-    label = "Melee combat",
-    fn = function(env) return env.inCombat and env.hasActiveEnemy and env.isMelee end,
-}
-P.not_melee = {
-    label = "Target outside melee",
-    fn = function(env) return env.hasActiveEnemy and env.isMelee == false end,
-}
-P.flame_shock_missing = {
-    label = "Flame Shock missing and mana above 15%",
-    fn = function(env)
-        return env.hasActiveEnemy and env.manaPct > 15 and not flameShockActive()
-    end,
-}
-P.earth_shock_moving = {
-    label = "Moving and target is not casting",
-    fn = function(env)
-        return env.hasActiveEnemy and env.isMoving and not env.targetInterruptible
-    end,
-}
-P.lightning_mastery = {
-    label = "Lightning Mastery ready in combat",
-    fn = function(env)
-        return env.inCombat and env.hasActiveEnemy and not lightningMasteryActive()
-    end,
-}
-P.chain_lightning_ok = {
-    label = "AoE, enough mana, Clearcasting, or Lightning Mastery",
-    fn = function(env)
-        if not env.hasActiveEnemy then return false end
-        if env.isAoE and env.manaPct > 15 then return true end
-        return env.manaPct >= 50 or clearcastingActive() or lightningMasteryActive()
-    end,
-}
-P.searing_totem_missing = {
-    label = "Single target and no Searing Totem",
-    fn = function(env)
-        return env.hasActiveEnemy and not env.isAoE and not env.searingTotemActive
-    end,
-}
-P.magma_totem_missing = {
-    label = "AoE, mana above 15%, and no Magma Totem",
-    fn = function(env)
-        return env.hasActiveEnemy and env.isAoE and env.manaPct > 15 and not env.magmaTotemActive
-    end,
-}
-P.fire_nova_ready = {
-    label = "AoE with an active fire totem",
-    fn = function(env)
-        return env.hasActiveEnemy and env.isAoE and env.manaPct > 15 and env.fireTotemActive
-    end,
-}
-P.maelstrom_five = {
-    label = "Maelstrom Weapon at five stacks",
-    fn = function(env) return env.hasActiveEnemy and maelstromStacks() >= 5 end,
-}
-P.rage_of_farseer_ready = {
-    label = "Enhancement burst ready",
-    fn = function(env)
-        return env.inCombat and env.hasActiveEnemy and env.isMelee
-            and not buffActive(425336, "rage_of_farseer")
-    end,
-}
-
-local COMMON_NODES = {
-    {
-        id = "earth_shock_interrupt", spellID = 8042, name = "Earth Shock",
-        color = "Interrupt", condition = "enemy_casting",
-    },
-}
-
-local function casterNodes(includeMastery)
-    local nodes = {}
-    nodes[#nodes + 1] = {
-        id = "earth_shock_moving", spellID = 8042, name = "Earth Shock",
-        color = "Damage", condition = "earth_shock_moving",
-    }
-    if includeMastery then
-        nodes[#nodes + 1] = {
-            id = "lightning_mastery", spellID = 16166, name = "Lightning Mastery",
-            color = "Damage", condition = "lightning_mastery",
-            opts = { noEnemy = true, noRangeCheck = true },
-        }
+    if type(addon.IsInMeleeRange) == "function" then
+        local r = addon:IsInMeleeRange("target")
+        if r ~= nil then return r end
     end
-    nodes[#nodes + 1] = {
-        id = "magma_totem", spellID = 8190, name = "Magma Totem", color = "Damage",
-        condition = "magma_totem_missing", opts = { noEnemy = true, noRangeCheck = true },
-    }
-    nodes[#nodes + 1] = {
-        id = "searing_totem", spellID = 3599, name = "Searing Totem", color = "Damage",
-        condition = "searing_totem_missing", opts = { noEnemy = true, noRangeCheck = true },
-    }
-    nodes[#nodes + 1] = {
-        id = "flame_shock", spellID = 8050, name = "Flame Shock", color = "Damage",
-        condition = "flame_shock_missing",
-    }
-    nodes[#nodes + 1] = {
-        id = "chain_lightning", spellID = 421, name = "Chain Lightning",
-        color = "Damage", condition = "chain_lightning_ok",
-    }
-    nodes[#nodes + 1] = {
-        id = "fire_nova", spellID = 1535, name = "Fire Nova",
-        color = "Damage", condition = "fire_nova_ready",
-        opts = { noEnemy = true, noRangeCheck = true },
-    }
-    nodes[#nodes + 1] = {
-        id = "lightning_bolt", spellID = 403, name = "Lightning Bolt",
-        color = "Damage", condition = "has_enemy",
-    }
-    return nodes
+    local ssID = Shaman.ResolveID(17364) or 17364
+    if type(addon.IsSpellInRangeEx) == "function" then
+        return addon:IsSpellInRangeEx(ssID, "target")
+    end
+    return nil
 end
 
-local elementalNodes = casterNodes(true)
-local restorationNodes = casterNodes(false)
+-- ---------------------------------------------------------------------------
+-- Event tracker (beliefs, combat timer, target changes)
+-- ---------------------------------------------------------------------------
+local tracker = CreateFrame("Frame", "CombatForeverAssistantShamanTracker", UIParent)
+tracker:RegisterEvent("PLAYER_ENTERING_WORLD")
+tracker:RegisterEvent("PLAYER_DEAD")
+tracker:RegisterEvent("PLAYER_TARGET_CHANGED")
+tracker:RegisterEvent("PLAYER_REGEN_DISABLED")
+tracker:RegisterEvent("PLAYER_REGEN_ENABLED")
+tracker:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+pcall(tracker.RegisterEvent, tracker, "TRAIT_CONFIG_UPDATED")
 
-module.RotationSpecs = {
-    ELE = {
-        title = "Elemental",
-        nodes = addon:ConcatCommonNodes(COMMON_NODES, elementalNodes),
-    },
-    ENH = {
-        title = "Enhancement",
-        nodes = addon:ConcatCommonNodes(COMMON_NODES, {
-            { id = "stormstrike", spellID = 17364, name = "Stormstrike",
-                color = "Damage", condition = "melee_combat" },
-            { id = "lightning_bolt_maelstrom", spellID = 403, name = "Lightning Bolt (Maelstrom)",
-                color = "Damage", condition = "maelstrom_five" },
-            { id = "rage_of_farseer", spellID = 425336, name = "Rage of the Farseer",
-                color = "Damage", condition = "rage_of_farseer_ready",
-                opts = { noEnemy = true, noRangeCheck = true } },
-            { id = "flame_shock", spellID = 8050, name = "Flame Shock",
-                color = "Damage", condition = "flame_shock_missing" },
-            { id = "chain_lightning", spellID = 421, name = "Chain Lightning",
-                color = "Damage", condition = "chain_lightning_ok" },
-            { id = "lightning_bolt_ranged", spellID = 403, name = "Lightning Bolt",
-                color = "Damage", condition = "not_melee" },
-        }),
-    },
-    REST = {
-        title = "Restoration (caster DPS fallback)",
-        nodes = addon:ConcatCommonNodes(COMMON_NODES, restorationNodes),
-    },
-}
-
-function module:TryFlash(spellID, color, condition, nodeName, env, opts)
-    if self.TickFlashUsed then return false end
-    opts = opts or {}
-    local knownID = Compat.HighestKnownSpellID(spellID) or spellID
-    local name = Compat.SpellName(knownID) or Compat.SpellName(spellID)
-    if not name then return false end
-    local details = {}
-    local castable = addon:CheckIfSpellCastable({
-        SpellID = knownID,
-        SpellName = name,
-        EnemyTargetNeeded = opts.noEnemy ~= true,
-        Unit = opts.unit or (opts.noEnemy and "player" or "target"),
-        NoRangeCheck = opts.noRangeCheck == true,
-        Debug = details,
-    })
-    if not castable then
-        if addon.debugMode then
-            addon:DebugPrint("Shaman", tostring(nodeName or spellID), "rejected:",
-                tostring(details.reason))
+tracker:SetScript("OnEvent", function(_, event, ...)
+    if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_DEAD" then
+        wipe(Shaman.BuffBeliefs)
+        Shaman.FlameShockBelief = nil
+        Shaman.StormstrikeBelief = nil
+        combatStartedAt = nil
+        addon:InvalidateSpecTalentCache("SHAMAN")
+    elseif event == "PLAYER_TARGET_CHANGED" then
+        Shaman.FlameShockBelief = nil
+        Shaman.StormstrikeBelief = nil
+    elseif event == "PLAYER_REGEN_DISABLED" then
+        combatStartedAt = now()
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        combatStartedAt = nil
+    elseif event == "TRAIT_CONFIG_UPDATED" then
+        addon:InvalidateSpecTalentCache("SHAMAN")
+    elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
+        local unit, _, spellID = ...
+        if unit == "player" then
+            Shaman.RecordCast(spellID)
         end
-        return false
     end
-    self.PendingSuggestion = { spellID = knownID, color = color or "Damage" }
-    self.TickFlashUsed = true
+end)
+
+-- ---------------------------------------------------------------------------
+-- Spec detection (registered in Core's shared pipeline)
+-- ---------------------------------------------------------------------------
+addon:RegisterSpecDetection(Shaman, {
+    charDbKey       = "shamanSpec",
+    treeOrder       = { "ELE", "ENH", "REST" },
+    validSpecs      = { "ELE", "ENH", "REST" },
+    signatures      = {
+        { spellID = 17364,  spec = "ENH",  source = "Stormstrike" },
+        { spellID = 425336, spec = "ENH",  source = "Rage of the Farseer" },
+        { spellID = 30823,  spec = "ENH",  source = "Shamanistic Rage" },
+        { spellID = 16166,  spec = "ELE",  source = "Lightning Mastery" },
+        { spellID = 16188,  spec = "REST", source = "Nature's Swiftness" },
+    },
+    defaultSpec     = "ELE",
+    defaultTiebreak = "ELE",
+})
+
+function Shaman:DetectSpec()
+    return addon:DetectSpec(self)
+end
+
+function Shaman:SetSpecOverride(specKey)
+    if specKey == "auto" then
+        addon.charDb.shamanSpec = nil
+        addon:InvalidateSpecTalentCache("SHAMAN")
+        return true
+    end
+    if specKey ~= "ELE" and specKey ~= "ENH" and specKey ~= "REST" then return false end
+    addon.charDb.shamanSpec = specKey
     return true
 end
 
-local function canSuggestBuff(spellID)
-    local knownID = Compat.HighestKnownSpellID(spellID) or spellID
-    local name = Compat.SpellName(knownID) or Compat.SpellName(spellID)
+-- ---------------------------------------------------------------------------
+-- Extra buffs & totems toggles (per character)
+-- ---------------------------------------------------------------------------
+function Shaman:IsExtraSuggestionEnabled(key)
+    if not EXTRA_KEYS[key] then return false end
+    local settings = addon.charDb and addon.charDb.shamanExtras
+    if type(settings) == "table" and settings[key] ~= nil then
+        return settings[key] ~= false
+    end
+    -- Water Shield defaults off unless enabled, so Lightning Shield doesn't fight it
+    if key == "water_shield" then return false end
+    return true
+end
+
+function Shaman:SetExtraSuggestionEnabled(key, enabled)
+    if not EXTRA_KEYS[key] or type(enabled) ~= "boolean" or not addon.charDb then return false end
+    addon.charDb.shamanExtras = addon.charDb.shamanExtras or {}
+    addon.charDb.shamanExtras[key] = enabled
+    return true
+end
+
+-- ---------------------------------------------------------------------------
+-- BuildEnv (uses Shared/Functions.lua globals)
+-- ---------------------------------------------------------------------------
+function Shaman:BuildEnv(specKey)
+    specKey = specKey or self:DetectSpec()
+    local hasEnemy = addon.UnitTargetExistsAndAttackable and addon.UnitTargetExistsAndAttackable() or false
+    local distance = addon.TargetDistance and addon:TargetDistance("target") or nil
+    local melee = resolveMeleeRange(distance)
+    local inCombat = playerInCombat()
+    local timeInCombat = (inCombat and combatStartedAt) and math.max(0, now() - combatStartedAt) or 0
+    local enemies = countActiveEnemies(hasEnemy)
+
+    local env = {
+        spec                  = specKey,
+        hasActiveEnemy        = hasEnemy,
+        inCombat              = inCombat,
+        isPvP                 = addon.IsPvPEnvironment and addon.IsPvPEnvironment() or false,
+        isMelee               = melee,
+        tooCloseForRanged     = (melee == true),
+        targetDistance        = distance,
+        targetInterruptible   = hasEnemy and (addon.IsTargetInterruptibleCasting and addon.IsTargetInterruptibleCasting("target") or false) or false,
+        targetCasting         = hasEnemy and (addon.IsTargetInterruptibleCasting and addon.IsTargetInterruptibleCasting("target") or false) or false,
+        isMoving              = playerMoving(),
+        isAoE                 = enemies >= 2,
+        enemies               = enemies,
+        combatTime            = timeInCombat,
+        maelstromStacks       = Shaman.GetMaelstromStacks(),
+        clearcastingActive    = Shaman.IsClearcastingActive(),
+        lightningMasteryActive = Shaman.IsBuffActive(16166, "lightning_mastery"),
+        flameShockActive      = hasEnemy and Shaman.IsFlameShockActive() or false,
+        stormstrikeActive     = hasEnemy and Shaman.IsStormstrikeDebuffActive() or false,
+        targetSlowed          = hasEnemy and Shaman.IsTargetSlowed() or false,
+        searingTotemActive    = Shaman.IsTotemSpellActive(3599, 1),
+        magmaTotemActive      = Shaman.IsTotemSpellActive(8190, 1),
+        fireTotemActive       = Shaman.IsTotemSlotActive(1, 1.5),
+    }
+
+    if type(addon.PopulateEnvResources) == "function" then
+        addon.PopulateEnvResources(env, "player")
+    end
+    if env.manaPct == nil then env.manaPct = 100 end
+    return env
+end
+
+-- ---------------------------------------------------------------------------
+-- Suggestion & TryFlash plumbing (matches Core:RunDeclaredRotation contract)
+-- ---------------------------------------------------------------------------
+Shaman.TickFlashUsed = nil
+Shaman.PendingSuggestion = nil
+Shaman.SpellName = Shaman.SpellName
+Shaman.CheckCastable = addon.CheckCastable
+
+function Shaman:Suggest(spellID, color, asAdditional)
+    if self.TickFlashUsed then return false end
+    self.TickFlashUsed = true
+    local knownID = Shaman.ResolveID(spellID) or spellID
+    local suggestion = { spellID = knownID, color = color or "Damage" }
+    if asAdditional and self.PendingSuggestion then
+        self.PendingSuggestion.additional = self.PendingSuggestion.additional or {}
+        table.insert(self.PendingSuggestion.additional, suggestion)
+    else
+        self.PendingSuggestion = suggestion
+    end
+    return true
+end
+
+function Shaman:TryFlash(spellID, color, condition, nodeName, env, opts, asAdditional)
+    if self.TickFlashUsed then return false end
+    opts = opts or {}
+    local knownID = Shaman.ResolveID(spellID)
+    if not knownID then
+        addon:DebugPrint("Shaman", tostring(nodeName or spellID), "BLOQUEADO: spell desconhecida")
+        return false
+    end
+    local spellName = Shaman.SpellName(knownID)
+    if not spellName then
+        addon:DebugPrint("Shaman", tostring(nodeName or spellID), "BLOQUEADO: nome indisponível")
+        return false
+    end
+    if addon.IsPressSuppressed and addon:IsPressSuppressed(spellName) then
+        addon:DebugPrint("Shaman", tostring(nodeName or spellID), "BLOQUEADO: botão pressionado agora")
+        return false
+    end
+    if type(condition) == "function" then
+        local ok, passed = pcall(condition, env)
+        if not ok or not passed then return false end
+    end
+
+    local dbg = {}
+    local castable = addon.CheckCastable({
+        SpellID           = knownID,
+        SpellName         = spellName,
+        EnemyTargetNeeded = opts.noEnemy ~= true,
+        Unit              = opts.unit or (opts.noEnemy and "player" or "target"),
+        NoRangeCheck      = (opts.noRangeCheck == true or opts.noRange == true),
+        NotIfActive       = opts.notIfActive == true,
+        Debug             = dbg,
+    })
+    if not castable then
+        addon:DebugPrint("Shaman", tostring(nodeName or spellID), "BLOQUEADO:", tostring(dbg.reason))
+        return false
+    end
+    addon:DebugPrint("Shaman", tostring(nodeName or spellID), "OK (sugere)")
+    return self:Suggest(knownID, color or "Damage", asAdditional)
+end
+
+-- ---------------------------------------------------------------------------
+-- Extra buffs & totems suggestions (weapon imbue via GetWeaponEnchantInfo!)
+-- ---------------------------------------------------------------------------
+local function canSuggestSelfSpell(spellID)
+    local knownID = Shaman.ResolveID(spellID)
+    if not knownID then return nil end
+    local name = Shaman.SpellName(knownID)
     if not name then return nil end
-    if addon:CheckIfSpellCastable({
-        SpellID = knownID,
-        SpellName = name,
+    if addon.IsPressSuppressed and addon:IsPressSuppressed(name) then return nil end
+    if addon.CheckCastable({
+        SpellID           = knownID,
+        SpellName         = name,
         EnemyTargetNeeded = false,
-        Unit = "player",
-        NoRangeCheck = true,
+        Unit              = "player",
+        NoRangeCheck      = true,
     }) then
         return { spellID = knownID, color = "Utility" }
     end
     return nil
 end
 
-local function manaSpringNeeded(env)
-    return not env.inCombat or env.manaPct < 50 or env.combatTime >= 60
-end
-
 local function nextExtraSuggestion(env, specKey)
-    if module:IsExtraSuggestionEnabled("lightning_shield")
-        and not buffActive(324, "lightning_shield", true, "LightningShield") then
-        local suggestion = canSuggestBuff(324)
-        if suggestion then return suggestion end
+    -- 1) Shield: Water Shield (if enabled & known, or low mana) vs Lightning Shield
+    if not Shaman.HasAnyShieldActive() then
+        local lowMana = addon.HasResourcePctAtMost(addon.PowerType.MANA, 45, "player")
+        if Shaman:IsExtraSuggestionEnabled("water_shield")
+            and (lowMana or not Shaman:IsExtraSuggestionEnabled("lightning_shield")) then
+            local sug = canSuggestSelfSpell(52127)
+            if sug then return sug end
+        end
+        if Shaman:IsExtraSuggestionEnabled("lightning_shield") then
+            local sug = canSuggestSelfSpell(324)
+            if sug then return sug end
+        end
+        if Shaman:IsExtraSuggestionEnabled("water_shield") then
+            local sug = canSuggestSelfSpell(52127)
+            if sug then return sug end
+        end
     end
 
-    local weaponKey, weaponID
+    -- 2) Weapon imbue (GetWeaponEnchantInfo — ENH: Windfury -> Rockbiter; ELE/REST: Flametongue -> Rockbiter)
     if specKey == "ENH" then
-        weaponKey, weaponID = "windfury_weapon", 8232
+        if Shaman:IsExtraSuggestionEnabled("windfury_weapon") then
+            if Shaman.ResolveID(8232) then
+                if not Shaman.HasWeaponEnchant("windfury") then
+                    local sug = canSuggestSelfSpell(8232)
+                    if sug then return sug end
+                end
+            elseif Shaman.ResolveID(8017) and not Shaman.HasWeaponEnchant("rockbiter") then
+                local sug = canSuggestSelfSpell(8017)
+                if sug then return sug end
+            end
+        end
     else
-        weaponKey, weaponID = "flametongue_weapon", 8024
-    end
-    if module:IsExtraSuggestionEnabled(weaponKey) and not buffActive(weaponID, weaponKey) then
-        local suggestion = canSuggestBuff(weaponID)
-        if suggestion then return suggestion end
+        if Shaman:IsExtraSuggestionEnabled("flametongue_weapon") then
+            if Shaman.ResolveID(8024) then
+                if not Shaman.HasWeaponEnchant("flametongue") then
+                    local sug = canSuggestSelfSpell(8024)
+                    if sug then return sug end
+                end
+            elseif Shaman.ResolveID(8017) and not Shaman.HasWeaponEnchant("rockbiter") then
+                local sug = canSuggestSelfSpell(8017)
+                if sug then return sug end
+            end
+        end
     end
 
-    if module:IsExtraSuggestionEnabled("strength_of_earth")
-        and not buffActive(8075, "strength_of_earth", false, "StrengthOfEarthAura")
-        and not totemActive(8075) then
-        local suggestion = canSuggestBuff(8075)
-        if suggestion then return suggestion end
+    -- 3) Earth Totem: Strength of Earth (slot 2)
+    if Shaman:IsExtraSuggestionEnabled("strength_of_earth")
+        and not Shaman.IsBuffActive(8075, "strength_of_earth", "StrengthOfEarthAura")
+        and not Shaman.IsTotemSlotActive(2, 2) then
+        local sug = canSuggestSelfSpell(8075)
+        if sug then return sug end
     end
 
-    if manaSpringNeeded(env) and module:IsExtraSuggestionEnabled("mana_spring")
-        and not buffActive(5675, "mana_spring", false, "ManaSpringAura")
-        and not totemActive(5675) then
-        local suggestion = canSuggestBuff(5675)
-        if suggestion then return suggestion end
+    -- 4) Air Totem: Windfury Totem (ENH) / Grace of Air (fallback) (slot 4)
+    if Shaman:IsExtraSuggestionEnabled("air_totem")
+        and specKey == "ENH"
+        and not Shaman.IsTotemSlotActive(4, 2) then
+        if not Shaman.IsBuffActive(8512, "windfury_totem", "WindfuryTotemAura") then
+            local sug = canSuggestSelfSpell(8512)
+            if sug then return sug end
+        end
+        if not Shaman.IsBuffActive(8835, "grace_of_air", "GraceOfAirAura") then
+            local sug = canSuggestSelfSpell(8835)
+            if sug then return sug end
+        end
     end
+
+    -- 5) Water Totem: Mana Spring (pre-combat / low mana / long fight) (slot 3)
+    local lowMana = addon.HasResourcePctAtMost(addon.PowerType.MANA, 49, "player")
+    if Shaman:IsExtraSuggestionEnabled("mana_spring")
+        and (not env.inCombat or lowMana or env.combatTime >= 60)
+        and not Shaman.IsBuffActive(5675, "mana_spring", "ManaSpringAura")
+        and not Shaman.IsTotemSlotActive(3, 2) then
+        local sug = canSuggestSelfSpell(5675)
+        if sug then return sug end
+    end
+
     return nil
 end
 
-local function recordSuccessfulCast(spellID)
-    local timestamp = now()
-    local buffs = {
-        { 324, "lightning_shield" },
-        { 8024, "flametongue_weapon", 300 },
-        { 8232, "windfury_weapon", 300 },
-        { 16166, "lightning_mastery", 15 },
-        { 425336, "rage_of_farseer", 25 },
-    }
-    for _, info in ipairs(buffs) do
-        if sameFamily(spellID, info[1]) then
-            module.buffBeliefs[info[2]] = {
-                expires = info[3] and timestamp + info[3] or nil,
-                appliedAt = timestamp,
-            }
-        end
-    end
-    if sameFamily(spellID, 8050) then
-        local ok, guid = pcall(UnitGUID, "target")
-        if ok and type(guid) == "string" and not isSecret(guid) then
-            flameShockBelief = { guid = guid, expires = timestamp + 12 }
-        end
-    end
-end
-
-local tracker = CreateFrame("Frame", nil, UIParent)
-tracker:RegisterEvent("PLAYER_ENTERING_WORLD")
-tracker:RegisterEvent("SPELLS_CHANGED")
-tracker:RegisterEvent("PLAYER_REGEN_DISABLED")
-tracker:RegisterEvent("PLAYER_REGEN_ENABLED")
-tracker:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
-pcall(tracker.RegisterEvent, tracker, "TRAIT_CONFIG_UPDATED")
-tracker:SetScript("OnEvent", function(_, event, ...)
-    if event == "PLAYER_ENTERING_WORLD" then
-        module.buffBeliefs = {}
-        flameShockBelief = nil
-        combatStartedAt = nil
-        invalidateTalentCache()
-    elseif event == "SPELLS_CHANGED" or event == "TRAIT_CONFIG_UPDATED" then
-        invalidateTalentCache()
-    elseif event == "PLAYER_REGEN_DISABLED" then
-        combatStartedAt = now()
-    elseif event == "PLAYER_REGEN_ENABLED" then
-        combatStartedAt = nil
-    elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
-        local unit, _, spellID = ...
-        spellID = numberValue(spellID)
-        if unit == "player" and spellID then recordSuccessfulCast(spellID) end
-    end
-end)
-
-function module:GetSuggestion()
-    if addon.db.shamanEnabled == false then return nil end
+-- ---------------------------------------------------------------------------
+-- Main tick entry point
+-- ---------------------------------------------------------------------------
+function Shaman:GetSuggestion()
+    if addon.db and addon.db.shamanEnabled == false then return nil end
     local _, playerClass = UnitClass("player")
     if playerClass ~= "SHAMAN" then return nil end
+
     self.PendingSuggestion = nil
     self.TickFlashUsed = nil
+    pcall(addon.HookActionButtonPress)
+
     if type(IsMounted) == "function" and IsMounted() then return nil end
+    if addon.CastingOrChanneling and addon.CastingOrChanneling(nil, "player") then return nil end
 
     local specKey = self:DetectSpec()
     local env = self:BuildEnv(specKey)
+
     addon:RunDeclaredRotation(self, specKey, env)
 
-    local buffSuggestion = nextExtraSuggestion(env, specKey)
-    if self.PendingSuggestion then
-        if buffSuggestion then
-            buffSuggestion.additional = { self.PendingSuggestion }
-            return buffSuggestion
-        end
-        return self.PendingSuggestion
+    local extra = nextExtraSuggestion(env, specKey)
+    local rotation = self.PendingSuggestion
+
+    -- Low-priority racial when rotation has nothing else to recommend
+    if not rotation and addon.SuggestRacial and addon:SuggestRacial(self, env) then
+        rotation = self.PendingSuggestion
     end
-    return buffSuggestion
+
+    if extra then
+        if rotation then extra.additional = { rotation } end
+        return extra
+    end
+    return rotation
 end
 
-function module:GetStatus()
+-- ---------------------------------------------------------------------------
+-- /cfa status & /cfa debug / /cfa shaman diagnostics
+-- ---------------------------------------------------------------------------
+function Shaman:GetStatus()
     local specKey, source = self:DetectSpec()
     local title = self.RotationSpecs[specKey] and self.RotationSpecs[specKey].title or specKey
-    return string.format("Shaman - %s (%s)", tostring(title), tostring(source))
+    local enabled = not (addon.db and addon.db.shamanEnabled == false)
+    return string.format("Shaman — %s (%s) — %s", tostring(title), tostring(source),
+        enabled and "ativo" or "desativado")
 end
 
-function module:DebugRotation()
+function Shaman:DebugRotation()
     local specKey, source = self:DetectSpec()
     local env = self:BuildEnv(specKey)
-    addon:DebugPrint("Shaman spec=", specKey, "source=", source,
-        "enemy=", env.hasActiveEnemy, "combat=", env.inCombat, "melee=", env.isMelee,
-        "mana=", env.manaPct, "aoe=", env.isAoE, "maelstrom=", maelstromStacks())
+    local hasMH, mhRem, mhID, mhReadable = Shaman.GetMainHandEnchantInfo()
+    local totems = Shaman.GetActiveTotems()
+    local function totemStr(slot)
+        local t = totems[slot]
+        if not t or not t.active then return "off" end
+        return string.format("%s(%.0fs)", t.name ~= "" and t.name or "on", t.remaining or 0)
+    end
+
+    print("|cff44ddff[CFA dbg]|r ===== RELATÓRIO DA ROTAÇÃO (Shaman) =====")
+    print(string.format(
+        "|cff44ddff[CFA dbg]|r spec=%s (%s) | enemy=%s | combat=%s | melee=%s | moving=%s | AoE=%s(%d) | pvp=%s",
+        tostring(specKey), tostring(source), tostring(env.hasActiveEnemy), tostring(env.inCombat),
+        tostring(env.isMelee), tostring(env.isMoving), tostring(env.isAoE), env.enemies or 0, tostring(env.isPvP)))
+    print(string.format(
+        "|cff44ddff[CFA dbg]|r mana=%s (ok=%s) | maelstrom=%d | clearcast=%s | flameShock=%s | stormstrike=%s",
+        env.manaPct and string.format("%.1f%%", env.manaPct) or "nil", tostring(env.manaReadable),
+        env.maelstromStacks or 0, tostring(env.clearcastingActive),
+        tostring(env.flameShockActive), tostring(env.stormstrikeActive)))
+    print(string.format(
+        "|cff44ddff[CFA dbg]|r armaMH: has=%s id=%s rem=%.0fs (ok=%s) | shield=%s | totens: F=%s E=%s W=%s A=%s",
+        tostring(hasMH), tostring(mhID), mhRem or 0, tostring(mhReadable),
+        tostring(Shaman.HasAnyShieldActive()),
+        totemStr(1), totemStr(2), totemStr(3), totemStr(4)))
+
+    local nodes = (type(self.GetEffectiveNodes) == "function" and self:GetEffectiveNodes(specKey))
+        or (self.RotationSpecs[specKey] and self.RotationSpecs[specKey].nodes) or {}
+    for _, node in ipairs(nodes) do
+        local enabled = node.enabled ~= false
+        local condOK = enabled and addon.NodeConditionPass(self, env, node, true)
+        local knownID = Shaman.ResolveID(node.spellID)
+        local locName = knownID and Shaman.SpellName(knownID) or nil
+        local dbg = {}
+        local castOK = false
+        if condOK and knownID and locName then
+            local opts = node.opts or {}
+            castOK = addon.CheckCastable({
+                SpellID           = knownID,
+                SpellName         = locName,
+                EnemyTargetNeeded = opts.noEnemy ~= true,
+                Unit              = opts.unit or (opts.noEnemy and "player" or "target"),
+                NoRangeCheck      = (opts.noRangeCheck == true or opts.noRange == true),
+                NotIfActive       = opts.notIfActive == true,
+                Debug             = dbg,
+            }) and true or false
+        elseif not knownID then
+            dbg.reason = "spell desconhecida"
+        elseif not locName then
+            dbg.reason = "sem nome localizado"
+        end
+        print(string.format("|cff44ddff[CFA dbg]|r %-26s en=%-5s cond=%-5s id=%-7s cast=%-5s %s",
+            tostring(node.id), tostring(enabled), tostring(condOK),
+            tostring(knownID or node.spellID), tostring(castOK), tostring(dbg.reason or "")))
+    end
 end
 
--- Registro da configuração de detecção de spec do Shaman no núcleo global.
-addon:RegisterSpecDetection(module, {
-    charDbKey   = "shamanSpec",
-    treeOrder   = { "ELE", "ENH", "REST" },
-    validSpecs  = { "ELE", "ENH", "REST" },
-    signatures  = {
-        { spellID = 17364,  spec = "ENH", source = "talent signature" }, -- Stormstrike
-        { spellID = 425336, spec = "ENH", source = "talent signature" }, -- Rage of the Farseer
-        { spellID = 16256,  spec = "ENH", source = "talent signature" },
-        { spellID = 16166,  spec = "ELE", source = "talent signature" }, -- Lightning Mastery
-        { spellID = 16188,  spec = "REST", source = "talent signature" }, -- Nature's Swiftness
-    },
-    defaultSpec     = "ELE",
-    defaultTiebreak = "ELE",
-})
+-- ---------------------------------------------------------------------------
+-- Attach shared Rotation Editor (ELE / ENH / REST + Extra tab)
+-- ---------------------------------------------------------------------------
+local function attachShamanEditor()
+    if type(addon.RotationEditor) ~= "table"
+        or type(addon.RotationEditor.Attach) ~= "function" then
+        return false
+    end
 
-addon:RegisterModule("SHAMAN", module)
+    local EXTRAS = {
+        { key = "lightning_shield",   labelKey = "shaman_buff_lightning_shield", fallback = "Lightning Shield" },
+        { key = "water_shield",       labelKey = "shaman_buff_water_shield",     fallback = "Water Shield" },
+        { key = "flametongue_weapon", labelKey = "shaman_buff_flametongue",      fallback = "Flametongue Weapon (Elemental/Rest)" },
+        { key = "windfury_weapon",    labelKey = "shaman_buff_windfury",         fallback = "Windfury Weapon (Enhancement)" },
+        { key = "strength_of_earth",  labelKey = "shaman_buff_strength",         fallback = "Strength of Earth Totem" },
+        { key = "air_totem",          labelKey = "shaman_buff_air_totem",        fallback = "Windfury / Grace of Air Totem (Enhancement)" },
+        { key = "mana_spring",        labelKey = "shaman_buff_mana_spring",      fallback = "Mana Spring Totem" },
+    }
+
+    local function renderExtraTab(scrollChild, mod, rows)
+        local y = -4
+        for _, item in ipairs(EXTRAS) do
+            local key, labelKey, fallback = item.key, item.labelKey, item.fallback
+            local row = CreateFrame("Frame", nil, scrollChild)
+            row:SetHeight(30)
+            row:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, y)
+            row:SetPoint("TOPRIGHT", scrollChild, "TOPRIGHT", 0, y)
+
+            local check = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
+            check:SetPoint("TOPLEFT", row, "TOPLEFT", 2, -2)
+            check:SetChecked(mod:IsExtraSuggestionEnabled(key))
+            local label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            label:SetPoint("LEFT", check, "RIGHT", 4, 0)
+            label:SetText((L and L[labelKey]) or fallback)
+            check:SetScript("OnClick", function(self)
+                mod:SetExtraSuggestionEnabled(key, self:GetChecked() and true or false)
+            end)
+            rows[#rows + 1] = row
+            y = y - 34
+        end
+        scrollChild:SetHeight(math.max(-y, 1))
+    end
+
+    return addon.RotationEditor.Attach(Shaman, {
+        storageKey = "shamanRotation",
+        title      = (L and L["shaman_tab"]) or "Shaman",
+        specOrder  = { "ELE", "ENH", "REST" },
+        extraTabs  = {
+            {
+                key    = "EXTRA",
+                label  = "Extra",
+                render = renderExtraTab,
+                hint   = (L and L["shaman_extra_hint"]) or "",
+            },
+        },
+    })
+end
+
+attachShamanEditor()
+
+addon:RegisterModule("SHAMAN", Shaman)

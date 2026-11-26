@@ -1,8 +1,10 @@
-local addonName, addon = ...
+-- Combat Forever Assistant — Shaman options tab (scrollable + shared rotation editor).
+local _, addon = ...
 local module = addon.modules.SHAMAN
 local L = addon.L
 
-local function BuildShamanTab(parent)
+local function BuildShamanTab(host)
+    local parent, setContentHeight = addon.Options.CreateScrollableTab(host)
     local y = -8
     local radioButtons = {}
     local radioValues = { "auto", "ELE", "ENH", "REST" }
@@ -41,7 +43,7 @@ local function BuildShamanTab(parent)
         label:SetJustifyH("LEFT")
         label:SetWordWrap(true)
         label:SetText(text)
-        y = y - label:GetStringHeight() - 8
+        y = y - math.max(24, label:GetStringHeight()) - 8
     end
 
     checkbox(L["shaman_enabled"], addon.db.shamanEnabled ~= false, function(enabled)
@@ -51,35 +53,40 @@ local function BuildShamanTab(parent)
     header(L["shaman_spec_header"])
     local specLabels = {
         auto = L["shaman_spec_auto"],
-        ELE = L["shaman_spec_ele"],
-        ENH = L["shaman_spec_enh"],
+        ELE  = L["shaman_spec_ele"],
+        ENH  = L["shaman_spec_enh"],
         REST = L["shaman_spec_rest"],
     }
     local function refreshSpecButtons()
-        local selected = addon.charDb.shamanSpec or "auto"
+        local selected = addon.charDb and addon.charDb.shamanSpec or "auto"
         for value, button in pairs(radioButtons) do
             button:SetChecked(selected == value)
         end
     end
     for _, value in ipairs(radioValues) do
-        local button = checkbox(specLabels[value], false, function()
-            module:SetSpecOverride(value)
+        local specVal = value
+        radioButtons[specVal] = checkbox(specLabels[specVal], false, function()
+            module:SetSpecOverride(specVal)
             refreshSpecButtons()
         end)
-        radioButtons[value] = button
     end
     refreshSpecButtons()
 
-    hint(L["shaman_rotation_hint"])
+    header(L["rotation_editor_header"])
+    y = addon.Options.AddRotationEditorControls(parent, y, module.OpenRotationEditor,
+        L["shaman_rotation_hint"])
+
     header(L["shaman_extra_header"])
     hint(L["shaman_extra_hint"])
 
     local extras = {
-        { "lightning_shield", "shaman_buff_lightning_shield" },
+        { "lightning_shield",   "shaman_buff_lightning_shield" },
+        { "water_shield",       "shaman_buff_water_shield" },
         { "flametongue_weapon", "shaman_buff_flametongue" },
-        { "windfury_weapon", "shaman_buff_windfury" },
-        { "strength_of_earth", "shaman_buff_strength" },
-        { "mana_spring", "shaman_buff_mana_spring" },
+        { "windfury_weapon",    "shaman_buff_windfury" },
+        { "strength_of_earth",  "shaman_buff_strength" },
+        { "air_totem",          "shaman_buff_air_totem" },
+        { "mana_spring",        "shaman_buff_mana_spring" },
     }
     for _, entry in ipairs(extras) do
         local key, labelKey = entry[1], entry[2]
@@ -87,6 +94,8 @@ local function BuildShamanTab(parent)
             module:SetExtraSuggestionEnabled(key, enabled)
         end)
     end
+
+    setContentHeight(-y + 12)
 end
 
 if addon.Options and addon.Options.RegisterTab then

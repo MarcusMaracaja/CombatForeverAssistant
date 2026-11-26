@@ -201,7 +201,10 @@ local function makeTabButton(id, index)
     b:SetHeight(32)
     b:SetPoint("TOPLEFT", frame.sidebar, "TOPLEFT", 0, -(index - 1) * 32)
     b.txt = b:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    b.txt:SetPoint("LEFT", 10, 0)
+    b.txt:SetPoint("LEFT", 8, 0)
+    b.txt:SetPoint("RIGHT", -6, 0)
+    b.txt:SetJustifyH("LEFT")
+    b.txt:SetWordWrap(true)
     b.bg = b:CreateTexture(nil, "BACKGROUND")
     b.bg:SetTexture("Interface\\Buttons\\WHITE8X8")
     b.bg:SetVertexColor(0.09, 0.09, 0.09, 0)
@@ -227,7 +230,7 @@ local function refreshTabButtons()
     local classTabs = {}
     local _, playerClass = UnitClass("player")
     for id, tab in pairs(tabs) do
-        if not seen[id] and id ~= "equipment"
+        if not seen[id] and id ~= "equipment" and id ~= "consumables"
             and (not tab.classTag or tab.classTag == playerClass) then
             classTabs[#classTabs + 1] = id
         end
@@ -240,6 +243,7 @@ local function refreshTabButtons()
         order[#order + 1] = id
     end
     if tabs.equipment then order[#order + 1] = "equipment" end
+    if tabs.consumables then order[#order + 1] = "consumables" end
     table.insert(order, "about")
 
     for i, id in ipairs(order) do

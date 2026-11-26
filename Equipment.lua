@@ -214,15 +214,9 @@ local function genericEnvironment()
         end
         env.tooCloseForRanged = env.isMelee or env.isDeadZone
     end
-    local function power(powerType)
-        local ok, value = safeCall(UnitPower, "player", powerType)
-        return ok and type(value) == "number" and value or 0
+    if type(addon.PopulateEnvResources) == "function" then
+        addon.PopulateEnvResources(env, "player")
     end
-    local currentMana, maxMana = power(0), 0
-    local ok, value = safeCall(UnitPowerMax, "player", 0)
-    if ok and type(value) == "number" then maxMana = value end
-    env.manaPct = maxMana > 0 and currentMana / maxMana * 100 or 0
-    env.rage, env.energy, env.combo = power(1), power(3), power(4)
     return env
 end
 

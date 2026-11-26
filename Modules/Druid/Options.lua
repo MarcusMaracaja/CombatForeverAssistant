@@ -1,18 +1,16 @@
+-- Combat Forever Assistant — Druid module: /cfa tab.
+-- Clean options: enable toggle, spec override (Auto/Balance/Feral/Restoration),
+-- rotation editor button, and Extra buff toggles. No forced Feral form selector
+-- (the player chooses Cat or Bear form in-game and Feral adapts automatically).
 local _, addon = ...
-local module = addon.modules.DRUID
-local L = addon.L
 
-addon.RotationEditor.Attach(module, {
-    title = L["druid_tab"],
-    storageKey = "druidRotation",
-    specOrder = { "BAL", "CAT", "BEAR", "REST" },
-})
+local Druid = addon.modules.DRUID
+local L = addon.L
 
 local function BuildDruidTab(host)
     local parent, setContentHeight = addon.Options.CreateScrollableTab(host)
     local y = -8
     local specButtons = {}
-    local formButtons = {}
 
     local function header(text)
         local label = parent:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -28,7 +26,7 @@ local function BuildDruidTab(host)
         button:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
         button:SetChecked(checked and true or false)
         button:SetScript("OnClick", function(self)
-            onClick(self:GetChecked() == true)
+            onClick(self:GetChecked() and true or false)
         end)
 
         local label = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
@@ -41,51 +39,36 @@ local function BuildDruidTab(host)
         return button
     end
 
-    checkbox(L["druid_enabled"], addon.db.druidEnabled ~= false, function(enabled)
-        addon.db.druidEnabled = enabled
+    checkbox(L["druid_enabled"], not addon.db or addon.db.druidEnabled ~= false, function(enabled)
+        if addon.db then addon.db.druidEnabled = enabled end
     end)
 
     header(L["druid_spec_header"])
     local specValues = { "auto", "BAL", "FER", "REST" }
     local specLabels = {
         auto = L["druid_spec_auto"],
-        BAL = L["druid_spec_balance"],
-        FER = L["druid_spec_feral"],
+        BAL  = L["druid_spec_balance"],
+        FER  = L["druid_spec_feral"],
         REST = L["druid_spec_restoration"],
     }
 
     local function refreshSpecButtons()
-        local selected = addon.charDb.druidSpec or "auto"
+        local selected = (addon.charDb and addon.charDb.druidSpec) or "auto"
         for value, button in pairs(specButtons) do button:SetChecked(selected == value) end
     end
     for _, value in ipairs(specValues) do
-        specButtons[value] = checkbox(specLabels[value], false, function()
-            module:SetSpecOverride(value)
+        local specVal = value
+        specButtons[specVal] = checkbox(specLabels[specVal], false, function()
+            Druid:SetSpecOverride(specVal)
             refreshSpecButtons()
         end)
     end
     refreshSpecButtons()
 
-    header(L["druid_feral_form"])
-    local function refreshFormButtons()
-        local selected = addon.charDb.druidFeralForm or "CAT"
-        for value, button in pairs(formButtons) do button:SetChecked(selected == value) end
-    end
-    for _, entry in ipairs({
-        { "CAT", L["druid_feral_cat"] },
-        { "BEAR", L["druid_feral_bear"] },
-    }) do
-        local value, label = entry[1], entry[2]
-        formButtons[value] = checkbox(label, false, function()
-            module:SetFeralFormPreference(value)
-            refreshFormButtons()
-        end)
-    end
-    refreshFormButtons()
-
     header(L["rotation_editor_header"])
-    y = addon.Options.AddRotationEditorControls(parent, y, module.OpenRotationEditor,
-        L["druid_rotation_hint"])
+    y = addon.Options.AddRotationEditorControls(parent, y, function()
+        if Druid and Druid.OpenRotationEditor then Druid.OpenRotationEditor() end
+    end, L["druid_rotation_hint"])
 
     header(L["druid_extra_header"])
     local extraHint = parent:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
@@ -95,13 +78,15 @@ local function BuildDruidTab(host)
     extraHint:SetWordWrap(true)
     extraHint:SetText(L["druid_extra_hint"])
     y = y - extraHint:GetStringHeight() - 8
-    checkbox(L["druid_extra_mark"], module:IsExtraSuggestionEnabled("mark"), function(enabled)
-        module:SetExtraSuggestionEnabled("mark", enabled)
+    checkbox(L["druid_extra_mark"], Druid:IsExtraSuggestionEnabled("mark"), function(enabled)
+        Druid:SetExtraSuggestionEnabled("mark", enabled)
     end)
-    checkbox(L["druid_extra_thorns"], module:IsExtraSuggestionEnabled("thorns"), function(enabled)
-        module:SetExtraSuggestionEnabled("thorns", enabled)
+    checkbox(L["druid_extra_thorns"], Druid:IsExtraSuggestionEnabled("thorns"), function(enabled)
+        Druid:SetExtraSuggestionEnabled("thorns", enabled)
     end)
     setContentHeight(-y + 12)
 end
 
-addon.Options.RegisterTab("druid", L["druid_tab"], "DRUID", BuildDruidTab)
+if addon.Options and addon.Options.RegisterTab then
+    addon.Options.RegisterTab("druid", L["druid_tab"], "DRUID", BuildDruidTab)
+end

@@ -107,6 +107,9 @@ function addon:DebugProbe()
         return C_UnitAuras and C_UnitAuras.GetAuraDataByIndex and C_UnitAuras.GetAuraDataByIndex("player", 1, "HELPFUL")
     end)
     P("aura#1 ok=", tostring(aok), "nome=", tostring(aura and aura.name), "spellId=", tostring(aura and aura.spellId))
+    if type(addon.DebugDumpResources) == "function" then
+        addon.DebugDumpResources()
+    end
 end
 
 function addon:RegisterModule(classTag, module)
@@ -276,6 +279,19 @@ local function updateSuggestionDisplay(suggestion, module)
             end
         end
     end
+    if addon.Consumables and type(addon.Consumables.GetSuggestions) == "function" then
+        local ok, extras = pcall(addon.Consumables.GetSuggestions)
+        if ok and type(extras) == "table" then
+            for _, extra in ipairs(extras) do suggestions[#suggestions + 1] = extra end
+        elseif not ok then
+            local now = GetTime()
+            addon.lastError = tostring(extras)
+            if now - lastEquipmentErrorPrint > 10 then
+                lastEquipmentErrorPrint = now
+                print("[CFA] Consumables recommendation error: " .. tostring(extras))
+            end
+        end
+    end
     local readySuggestions = {}
     local keySuggestion
     for _, candidate in ipairs(suggestions) do
@@ -427,6 +443,18 @@ for _, fam in ipairs(FAMILIES) do
 end
 addon.Compat.FamilyOf = familyOf
 
+function addon.Compat.RegisterSpellFamilies(families)
+    if type(families) ~= "table" then return end
+    for _, fam in ipairs(families) do
+        if type(fam) == "table" and #fam > 0 then
+            FAMILIES[#FAMILIES + 1] = fam
+            for _, id in ipairs(fam) do
+                if type(id) == "number" then familyOf[id] = fam end
+            end
+        end
+    end
+end
+
 -- direct "known" check by ID (client exposes C_SpellBook.IsSpellKnown[OrInSpellBook])
 local _knownIDCache = {}
 function addon.Compat.IsSpellKnownID(id)
@@ -542,9 +570,13 @@ end
 
 function addon.Compat.SpellIDFromName(name)
     if type(name) ~= "string" then return nil end
-    -- busca por nome no cache nome->ID (preenchido por SpellInfoByID/SpellName)
-    for id, nm in pairs(addon.Compat.SpellNameToID or {}) do
-        if type(nm) == "string" and nm:lower() == name:lower() then return id end
+    -- busca por nome no cache nome->ID (preenchido por SpellInfoByID/SpellName: [name] = id)
+    local cache = addon.Compat.SpellNameToID or {}
+    if type(cache[name]) == "number" then return cache[name] end
+    local lower = name:lower()
+    for k, v in pairs(cache) do
+        if type(k) == "string" and type(v) == "number" and k:lower() == lower then return v end
+        if type(v) == "string" and type(k) == "number" and v:lower() == lower then return k end
     end
     -- varredura do spellbook como fallback
     if C_SpellBook and C_SpellBook.GetSpellBookItemInfo then
@@ -552,7 +584,7 @@ function addon.Compat.SpellIDFromName(name)
             local ok, info = pcall(C_SpellBook.GetSpellBookItemInfo, i, "spell")
             if ok and info and info.name then
                 local base = info.name:gsub("%s*%b()%s*$", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                if base:lower() == name:lower() then
+                if base:lower() == lower then
                     local id = addon.Compat.HighestKnownSpellID and addon.Compat.HighestKnownSpellID(info.id) or info.id
                     return id
                 end
@@ -827,12 +859,30 @@ local FILTER_EVALS = {
         return true
     end,
     resource = function(env, v)
-        if v == 1 then return (env.manaPct or 0) > 15 end
-        if v == 2 then return (env.manaPct or 0) > 40 end
-        if v == 3 then return (env.manaPct or 0) > 50 end
-        if v == 4 then return (env.rage or 0) >= 40 end
-        if v == 5 then return (env.energy or 0) >= 40 end
-        if v == 6 then return (env.combo or 0) >= 5 end
+        if v == 1 then
+            if type(addon.HasManaPct) == "function" then return (addon.HasManaPct(15)) end
+            return (env.manaPct or 100) > 15
+        end
+        if v == 2 then
+            if type(addon.HasManaPct) == "function" then return (addon.HasManaPct(40)) end
+            return (env.manaPct or 100) > 40
+        end
+        if v == 3 then
+            if type(addon.HasManaPct) == "function" then return (addon.HasManaPct(50)) end
+            return (env.manaPct or 100) > 50
+        end
+        if v == 4 then
+            if type(addon.HasRage) == "function" then return (addon.HasRage(40)) end
+            return (env.rage == nil or env.rage >= 40)
+        end
+        if v == 5 then
+            if type(addon.HasEnergy) == "function" then return (addon.HasEnergy(40)) end
+            return (env.energy == nil or env.energy >= 40)
+        end
+        if v == 6 then
+            if type(addon.HasComboPoints) == "function" then return (addon.HasComboPoints(5)) end
+            return ((env.combo or env.comboPoints or 0) >= 5)
+        end
         return true
     end,
     aoe      = function(env, v)
@@ -1418,7 +1468,8 @@ function addon:IsSpellInRangeEx(spellName, unit)
     if type(spellName) == "number" then
         spellID = spellName
     else
-        spellID = addon.SafeNumber(function() return addon.Compat.SpellIDFromName and addon.Compat.SpellIDFromName(spellName) end, nil)
+        local resolved = addon.Compat and addon.Compat.SpellIDFromName and addon.Compat.SpellIDFromName(spellName)
+        spellID = addon.SafeNumber(resolved, nil)
     end
     local base = stripRank(tostring(spellName))
 
@@ -1651,24 +1702,28 @@ function addon:CheckIfSpellCastable(z)
     end
 
     local notIfActiveOk = true
+    local lag = 0.2
     if not z.NotIfActive and not Aura then
         -- sem NotIfActive e sem aura: passa
     else
         local current = false
         if addon.Compat and addon.Compat.IsCurrentSpell then
-            current = addon.Compat.IsCurrentSpell(baseName)
+            current = addon.Compat.IsCurrentSpell(knownID or baseName)
         elseif type(IsCurrentSpell) == "function" then
             local ok, c = pcall(IsCurrentSpell, spellName)
-            if ok then current = not not c end
+            if ok and not (_G.issecretvalue and issecretvalue(c)) then current = not not c end
         end
-        local casting = false
+        local casting = nil
         if addon.Compat and addon.Compat.CastingOrChanneling then
             casting = addon.Compat.CastingOrChanneling(baseName, "player")
         end
-        if not z.NotIfActive and not Aura then
-            notIfActiveOk = true
+        if current then
+            notIfActiveOk = false
+        elseif casting then
+            local rem = addon.SafeNumber(casting, nil)
+            notIfActiveOk = (not Aura and rem ~= nil and rem <= lag)
         else
-            notIfActiveOk = (not current and not casting) or (not Aura and (casting or 0) <= lag)
+            notIfActiveOk = true
         end
     end
 
@@ -1735,9 +1790,9 @@ function addon:CheckIfSpellCastable(z)
         end
     end
 
-    if not (z.EvenIfNotUsable or isUsable) then return fail("spell não utilizável agora") end
     if notEnoughPower then return fail("sem mana/poder") end
-    if not notIfActiveOk then return fail("já está conjurando/canalizando") end
+    if not (z.EvenIfNotUsable or isUsable) then return fail("spell não utilizável agora") end
+    if not notIfActiveOk then return fail("já está ativa/conjurando") end
     if not enemyOk then return fail("alvo não é inimigo") end
     if not manaTargetOk then return fail("alvo não usa mana") end
     if not debuffSlotOk then return fail("sem espaço de debuff") end
@@ -1804,30 +1859,78 @@ function addon.Compat.UsableSpell(spellName, knownID)
     local id = (type(knownID) == "number" and knownID)
         or (type(spellName) == "number" and spellName)
         or (addon.Compat.SpellIDFromName and addon.Compat.SpellIDFromName(spellName)) or nil
+
+    local function safeBool(v)
+        if type(addon.SafeBoolean) == "function" then return addon.SafeBoolean(v, nil) end
+        if type(v) ~= "boolean" then return nil end
+        if _G.issecretvalue and issecretvalue(v) then return nil end
+        return v
+    end
+
     if id and C_Spell and type(C_Spell.IsSpellUsable) == "function" then
-        local ok, isUsable, notEnoughPower = pcall(C_Spell.IsSpellUsable, id)
-        if ok and isUsable == true then
-            return true, notEnoughPower == true
-        end
-        if ok and isUsable == false then
-            return false, notEnoughPower == true
+        local ok, rawUsable, rawNoPower = pcall(C_Spell.IsSpellUsable, id)
+        if ok then
+            local usable = safeBool(rawUsable)
+            local noPower = safeBool(rawNoPower)
+            if noPower == true then
+                return false, true
+            end
+            if usable ~= nil then
+                return usable, (noPower == true)
+            end
         end
     end
-    -- O fallback legado só é usado se a API moderna estiver ausente,
-    -- lançar erro ou não retornar um booleano.
+
+    -- Fallback pelo slot na barra de ação (secret-safe)
+    if id and type(addon.CheckActionUsable) == "function" then
+        local aUsable, aNoPower, aReadable = addon.CheckActionUsable(id)
+        if aReadable then
+            if aNoPower == true then return false, true end
+            if aUsable ~= nil then return aUsable, (aNoPower == true) end
+        end
+    end
+
+    -- Fallback por custo da spell vs UnitPower via camada global de recursos
+    if id and type(addon.GetSpellPowerCost) == "function" and type(addon.GetResource) == "function" then
+        local costInfo = addon.GetSpellPowerCost(id)
+        if costInfo and costInfo.readable and costInfo.effectiveCost then
+            local cur, _, _, readable = addon.GetResource(costInfo.powerType, "player")
+            if readable then
+                local enough = cur >= costInfo.effectiveCost
+                return enough, (not enough)
+            end
+        end
+    end
+
+    -- Fallback legado (secret-safe)
     if type(IsUsableSpell) == "function" then
-        local ok, a, b = pcall(IsUsableSpell, spellName)
-        if ok and a ~= nil then return a and true or false, not not b end
+        local ok, rawUsable, rawNoPower = pcall(IsUsableSpell, spellName)
+        if ok then
+            local usable = safeBool(rawUsable)
+            local noPower = safeBool(rawNoPower)
+            if noPower == true then return false, true end
+            if usable ~= nil then return usable, (noPower == true) end
+        end
     end
     return true, false
 end
 
 function addon.Compat.IsCurrentSpell(spellName)
+    local id = type(spellName) == "number" and spellName
+        or (addon.Compat.SpellIDFromName and addon.Compat.SpellIDFromName(spellName))
+    if id and C_Spell and type(C_Spell.IsCurrentSpell) == "function" then
+        local ok, c = pcall(C_Spell.IsCurrentSpell, id)
+        if ok then
+            local b = type(addon.SafeBoolean) == "function" and addon.SafeBoolean(c, nil)
+                or (type(c) == "boolean" and not (_G.issecretvalue and issecretvalue(c)) and c or nil)
+            if b ~= nil then return b end
+        end
+    end
     local name = addon.Compat.SpellName and addon.Compat.SpellName(spellName) or spellName
     if not name then return false end
     if type(IsCurrentSpell) == "function" then
         local ok, c = pcall(IsCurrentSpell, name)
-        if ok then return not not c end
+        if ok and not (_G.issecretvalue and issecretvalue(c)) then return not not c end
     end
     return false
 end
@@ -1835,8 +1938,10 @@ end
 function addon.Compat.GetCasting(spellName, unit)
     unit = unit or "player"
     if type(UnitCastingInfo) == "function" then
-        local ok, _, _, _, _, startMS, endMS = pcall(UnitCastingInfo, unit)
-        if ok and endMS and startMS then
+        local ok, _, _, _, startMS, endMS = pcall(UnitCastingInfo, unit)
+        startMS = ok and addon.SafeNumber(startMS, nil) or nil
+        endMS = ok and addon.SafeNumber(endMS, nil) or nil
+        if endMS and startMS then
             local remaining = (endMS - (GetTime and GetTime() * 1000 or 0)) / 1000
             if remaining > 0 then return remaining end
             return 0
@@ -1847,18 +1952,20 @@ end
 
 function addon.Compat.CastingOrChanneling(spellName, unit)
     unit = unit or "player"
-    local name = addon.Compat.SpellName and addon.Compat.SpellName(spellName) or spellName
     local remaining = nil
     if type(UnitCastingInfo) == "function" then
-        local okCast, _, _, _, _, startMS, endMS = pcall(UnitCastingInfo, unit)
-        if okCast and endMS and startMS then
+        local okCast, _, _, _, startMS, endMS = pcall(UnitCastingInfo, unit)
+        startMS = okCast and addon.SafeNumber(startMS, nil) or nil
+        endMS = okCast and addon.SafeNumber(endMS, nil) or nil
+        if endMS and startMS then
             remaining = (endMS - (GetTime and GetTime() * 1000 or 0)) / 1000
             if remaining > 0 then return remaining end
         end
     end
     if type(UnitChannelInfo) == "function" then
         local okChan, _, _, _, _, endMS = pcall(UnitChannelInfo, unit)
-        if okChan and endMS then
+        endMS = okChan and addon.SafeNumber(endMS, nil) or nil
+        if endMS then
             remaining = (endMS - (GetTime and GetTime() * 1000 or 0)) / 1000
             if remaining > 0 then return remaining end
         end
@@ -2043,6 +2150,41 @@ SlashCmdList["COMBATFOREVERASSISTANT"] = function(msg)
         print("|cff44ddff[CFA]|r modo debug: DESLIGADO")
     elseif msg == "probe" then
         addon:DebugProbe()
+    elseif msg == "res" or msg == "resources" or msg == "maul" or msg:match("^res%s+%d+$") then
+        local idStr = msg:match("^res%s+(%d+)$")
+        local spellID = idStr and tonumber(idStr) or (msg == "maul" and 6807 or nil)
+        if type(addon.DebugDumpResources) == "function" then
+            addon.DebugDumpResources(spellID)
+        else
+            print("|cff44ddff[CFA]|r DebugDumpResources indisponível.")
+        end
+    elseif msg == "items" or msg == "food" or msg == "consumables" or msg == "potions" then
+        if addon.Consumables and type(addon.Consumables.DebugDump) == "function" then
+            addon.Consumables.DebugDump()
+        else
+            print("|cff44ddff[CFA]|r Consumables.DebugDump indisponível.")
+        end
+    elseif msg == "shaman" then
+        local mod = addon.modules and addon.modules.SHAMAN
+        if mod and type(mod.DebugRotation) == "function" then
+            mod:DebugRotation()
+        else
+            print("|cff44ddff[CFA]|r Módulo Shaman indisponível.")
+        end
+    elseif msg == "priest" then
+        local mod = addon.modules and addon.modules.PRIEST
+        if mod and type(mod.DebugRotation) == "function" then
+            mod:DebugRotation()
+        else
+            print("|cff44ddff[CFA]|r Módulo Priest indisponível.")
+        end
+    elseif msg == "warrior" then
+        local mod = addon.modules and addon.modules.WARRIOR
+        if mod and type(mod.DebugRotation) == "function" then
+            mod:DebugRotation()
+        else
+            print("|cff44ddff[CFA]|r Módulo Warrior indisponível.")
+        end
     elseif msg == "key" then
         addon.db.keyButton = not addon.db.keyButton
         print(addon.db.keyButton and L["key_button_shown"] or L["key_button_hidden"])

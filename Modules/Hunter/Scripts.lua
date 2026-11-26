@@ -136,10 +136,15 @@ end
 function Hunter:BuildEnv()
     local env = {}
     env.myHP = safePct(UnitHealth and UnitHealth("player"), UnitHealthMax and UnitHealthMax("player"))
-    env.manaPct = safePct(UnitPower and UnitPower("player"), UnitPowerMax and UnitPowerMax("player"))
-    env.rage = safePower("player", 1)
-    env.energy = safePower("player", 3)
-    env.combo = safePower("player", 4)
+    if type(addon.PopulateEnvResources) == "function" then
+        addon.PopulateEnvResources(env, "player")
+    end
+    -- Fallback numérico para compatibilidade (manaReadable/resources.mana.readable preserva o estado real)
+    if env.manaPct == nil then
+        env.manaPct = safePct(UnitPower and UnitPower("player"), UnitPowerMax and UnitPowerMax("player"))
+    else
+        env.manaPct = math.floor(env.manaPct + 0.5)
+    end
     env.targetCasting = isCastingSomething("target")
     env.hasActiveEnemy = addon.UnitTargetExistsAndAttackable()
     env.isPvP = addon.IsPvPEnvironment()
@@ -301,7 +306,8 @@ function Hunter:ManageAspects(env)
         return nil
     end
     local dangerousAspect = Hunter.IsAspectOfCheetahActive() or Hunter.IsAspectOfPackActive()
-    if not env.tooCloseForRanged and (env.manaPct > 70 or not Hunter.IsAspectActive() or dangerousAspect) then
+    local highMana = type(addon.HasManaPct) == "function" and (addon.HasManaPct(71)) or ((env.manaPct or 100) > 70)
+    if not env.tooCloseForRanged and (highMana or not Hunter.IsAspectActive() or dangerousAspect) then
         if self:IsAspectSuggestionEnabled("Hawk") and not Hunter.IsAspectOfHawkActive() then
             return suggestAspect(13165, "Utility", "Hawk")
         end

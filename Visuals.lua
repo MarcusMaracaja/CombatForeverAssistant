@@ -161,6 +161,107 @@ function Visuals.FindItemButtons(itemID)
     return itemButtonMap[itemID] or {}
 end
 
+local function bagButtonItemID(button)
+    if not button then return nil end
+    local bagID, slotID
+    if type(button.GetBagID) == "function" then
+        local ok, b = pcall(button.GetBagID, button)
+        if ok and type(b) == "number" then bagID = b end
+    end
+    if bagID == nil and type(button.GetParent) == "function" then
+        local parent = button:GetParent()
+        if parent and type(parent.GetID) == "function" then
+            local ok, b = pcall(parent.GetID, parent)
+            if ok and type(b) == "number" then bagID = b end
+        end
+    end
+    if type(button.GetID) == "function" then
+        local ok, s = pcall(button.GetID, button)
+        if ok and type(s) == "number" then slotID = s end
+    end
+    if bagID == nil or slotID == nil or slotID <= 0 then return nil end
+    if C_Container and type(C_Container.GetContainerItemID) == "function" then
+        local ok, id = pcall(C_Container.GetContainerItemID, bagID, slotID)
+        if ok and type(id) == "number" then return id end
+    end
+    if type(GetContainerItemID) == "function" then
+        local ok, id = pcall(GetContainerItemID, bagID, slotID)
+        if ok and type(id) == "number" then return id end
+    end
+    return nil
+end
+
+local function collectVisibleBagButtons(wantItemID)
+    local out = {}
+    local seen = {}
+    local function inspectButton(btn)
+        if not btn or seen[btn] then return end
+        local okShown, shown = pcall(btn.IsShown, btn)
+        if not okShown or not shown then return end
+        seen[btn] = true
+        if wantItemID == nil then
+            out[#out + 1] = btn
+        else
+            local id = bagButtonItemID(btn)
+            if id == wantItemID then out[#out + 1] = btn end
+        end
+    end
+
+    local function inspectContainer(container)
+        if not container then return end
+        local okShown, shown = pcall(container.IsShown, container)
+        if not okShown or not shown then return end
+        if type(container.EnumerateValidItems) == "function" then
+            local okEnum = pcall(function()
+                for _, btn in container:EnumerateValidItems() do
+                    inspectButton(btn)
+                end
+            end)
+            if okEnum then return end
+        end
+        local name = type(container.GetName) == "function" and container:GetName() or nil
+        if name then
+            for slot = 1, 36 do
+                local btn = _G[name .. "Item" .. slot]
+                if btn then inspectButton(btn) end
+            end
+        end
+    end
+
+    -- Modern combined bag frame (Retail / Interface 16001)
+    if _G.ContainerFrameCombinedBags then
+        inspectContainer(_G.ContainerFrameCombinedBags)
+    end
+    -- Individual Blizzard bag frames (split bags / classic layout)
+    local maxFrames = tonumber(_G.NUM_CONTAINER_FRAMES) or 13
+    for i = 1, maxFrames do
+        local cf = _G["ContainerFrame" .. i]
+        if cf then inspectContainer(cf) end
+    end
+    return out
+end
+
+function Visuals.IsAnyBagOpen()
+    if _G.ContainerFrameCombinedBags then
+        local ok, shown = pcall(_G.ContainerFrameCombinedBags.IsShown, _G.ContainerFrameCombinedBags)
+        if ok and shown then return true end
+    end
+    local maxFrames = tonumber(_G.NUM_CONTAINER_FRAMES) or 13
+    for i = 1, maxFrames do
+        local cf = _G["ContainerFrame" .. i]
+        if cf then
+            local ok, shown = pcall(cf.IsShown, cf)
+            if ok and shown then return true end
+        end
+    end
+    return false
+end
+
+function Visuals.FindBagItemButtons(itemID)
+    if type(itemID) ~= "number" then return {} end
+    return collectVisibleBagButtons(itemID)
+end
+
 -- public so the minimap button (and others) can reuse the same dashed ring
 function Visuals.DashRing(parent, radius, thickness, rgb, segments)
     segments = segments or 14
@@ -316,9 +417,12 @@ local function showSpell(spellID, reason)
     showButtons(buttons, reason)
 end
 
-local function showItem(itemID, reason)
+local function showItem(itemID, reason, highlightBags)
     if not itemID then return end
     showButtons(Visuals.FindItemButtons(itemID), reason)
+    if highlightBags then
+        showButtons(Visuals.FindBagItemButtons(itemID), reason)
+    end
 end
 
 function Visuals.ShowMany(suggestions)
@@ -327,19 +431,30 @@ function Visuals.ShowMany(suggestions)
         Visuals.Clear()
         return
     end
+    local bagOpen = Visuals.IsAnyBagOpen()
     local signature = {
         tostring(addon.db.visualMode or "circle"),
         tostring(addon.db.borderWidth or 12),
         tostring(addon.db.useSingleColor),
         tostring(addon.db.singleColorIndex or 2),
+        tostring(bagOpen),
     }
     for _, suggestion in ipairs(suggestions) do
         if type(suggestion) == "table" then
+            local bagSlotsSig = ""
+            if suggestion.kind == "item" and suggestion.highlightBags and bagOpen and suggestion.itemID then
+                local bagBtns = Visuals.FindBagItemButtons(suggestion.itemID)
+                local ptrs = {}
+                for _, bb in ipairs(bagBtns) do ptrs[#ptrs + 1] = tostring(bb) end
+                bagSlotsSig = table.concat(ptrs, ",")
+            end
             signature[#signature + 1] = table.concat({
                 tostring(suggestion.kind or "spell"),
                 tostring(suggestion.spellID or ""),
                 tostring(suggestion.itemID or ""),
                 tostring(suggestion.color or suggestion.reason or "Utility"),
+                tostring(suggestion.highlightBags and "bag" or "bar"),
+                bagSlotsSig,
             }, ":")
         end
     end
@@ -350,7 +465,7 @@ function Visuals.ShowMany(suggestions)
     for _, suggestion in ipairs(suggestions) do
         if type(suggestion) == "table" then
             if suggestion.kind == "item" then
-                showItem(suggestion.itemID, suggestion.color or suggestion.reason)
+                showItem(suggestion.itemID, suggestion.color or suggestion.reason, suggestion.highlightBags)
             else
                 showSpell(suggestion.spellID, suggestion.color or suggestion.reason)
             end

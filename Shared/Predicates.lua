@@ -49,7 +49,10 @@ P["aoe_not_too_close"] = {
 }
 
 P["aoe_not_pvp_mana15"] = {
-    fn = function(env) return env.isAoE and not env.isPvP and (env.manaPct or 100) > 15 end,
+    fn = function(env)
+        local hasMana = type(addon.HasManaPct) == "function" and (addon.HasManaPct(15)) or ((env.manaPct or 100) > 15)
+        return env.isAoE and not env.isPvP and hasMana
+    end,
     label = LBL("AoE PvE (mana > 15%)", "AoE PvE (mana > 15%)"),
 }
 
