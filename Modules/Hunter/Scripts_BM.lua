@@ -2,14 +2,14 @@
 -- Order: shared melee/dead-zone prefix, then the Forever BM chain:
 --   Intimidation -> Scatter Shot -> Bestial Wrath / Rapid Fire -> Stings ->
 --   Multi-Shot -> Aimed (single target) -> Arcane -> Volley.
-local moduleName, module = ...
+local _, addon = ...
 
-local Hunter = module
+local Hunter = addon.modules.HUNTER
 Hunter.RotationSpecs = Hunter.RotationSpecs or {}
 
 Hunter.RotationSpecs.BM = {
     title = "Beast Mastery",
-    nodes = module:ConcatCommonNodes(Hunter.HunterMeleeNodes, {
+    nodes = addon:ConcatCommonNodes(Hunter.HunterMeleeNodes, {
         { id = "intimidation",  spellID = 19577, name = "Intimidation",  color = "Interrupt", condition = "pet_interruptible" },
         { id = "scatter_shot",  spellID = 19503, name = "Scatter Shot",  color = "Interrupt", condition = "enemy_interruptible_not_cc" },
         { id = "bestial_wrath", spellID = 19574, name = "Bestial Wrath", color = "Damage",    condition = "enemy_in_combat_not_too_close", passthrough = true },

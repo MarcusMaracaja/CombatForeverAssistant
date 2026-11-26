@@ -1,14 +1,14 @@
--- Combat Forever Assistant â€” Hunter module: hub.
--- Builds the env, detects the spec, decides the suggestion and registers
--- the module with the core. The core pipeline (OnUpdate -> GetSuggestion)
--- takes it from here and flashes the button.
-local moduleName, module = ...
-local addon = _G.CFA
+-- Combat Forever Assistant — Hunter module: main rotation hub.
+-- Isolated inside addon.modules.HUNTER. Builds env, delegates spec detection
+-- to Core, runs the declared spec rotation, manages Aspects/Pet/Mark/Concussive,
+-- and attaches the shared rotation editor with Hunter's Extra tab.
+local _, addon = ...
 
-local L = module.L
+local Hunter = addon.modules.HUNTER
+local L = addon.L
 
 -- ---------------------------------------------------------------------------
--- Tracking frame (aliases created at load so later files can use them)
+-- Tracking frame (beliefs & pet death tracking)
 -- ---------------------------------------------------------------------------
 local trackerFrame = CreateFrame("Frame", "CombatForeverAssistantHunterTracker", UIParent)
 trackerFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
@@ -20,122 +20,62 @@ trackerFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
 
 trackerFrame:SetScript("OnEvent", function(_, event, ...)
     if event == "PLAYER_TARGET_CHANGED" then
-        module.OnTargetChanged()
+        Hunter.OnTargetChanged()
     elseif event == "PLAYER_ENTERING_WORLD" then
-        -- NOTE: aspect belief is intentionally kept (persistent per character);
-        -- aspects don't expire on /reload, only on death or when recast.
-        module.AspectBelief = nil
-        module.MarkBelief = { slot = 0, active = false }
-        module.SerpentStingBelief = { slot = 0, applied = false, expires = 0 }
-        module.WingClipBelief = { slot = 0, applied = false, expires = 0 }
-        module.PET_IS_DEAD = false
+        -- NOTE: addon.charDb.aspectBelief is intentionally kept (persistent
+        -- per character); aspects don't expire on /reload, only on death or recast.
+        Hunter.AspectBelief = nil
+        Hunter.MarkBelief = { slot = 0, active = false }
+        Hunter.SerpentStingBelief = { slot = 0, applied = false, expires = 0 }
+        Hunter.WingClipBelief = { slot = 0, applied = false, expires = 0 }
+        Hunter.PET_IS_DEAD = false
     elseif event == "PLAYER_REGEN_ENABLED" then
-        module.PET_IS_DEAD = false
+        Hunter.PET_IS_DEAD = false
     elseif event == "UNIT_PET" then
         local unit = ...
-        if type(unit) == "string" then
-            local ok, same = pcall(UnitIsUnit, unit, "player")
-            if ok and same then
-                local ok2, exists = pcall(UnitExists, "pet")
-                local ok3, dead = pcall(UnitIsDeadOrGhost, "pet")
-                module.PET_IS_DEAD = ok2 and exists and ok3 and dead or false
-            end
+        if type(unit) == "string" and addon.UnitIsSame(unit, "player") then
+            local ok2, exists = pcall(UnitExists, "pet")
+            local ok3, dead = pcall(UnitIsDeadOrGhost, "pet")
+            Hunter.PET_IS_DEAD = ok2 and exists and ok3 and dead or false
         end
     elseif event == "UNIT_DIED" then
         local unit = ...
         if type(unit) == "string" then
-            local ok, same = pcall(UnitIsUnit, unit, "pet")
-            if ok and same then
-                module.PET_IS_DEAD = true
+            if addon.UnitIsSame(unit, "pet") then
+                Hunter.PET_IS_DEAD = true
             end
-            -- the player's aspect is lost on death; drop the persistent belief
-            local ok2, sameP = pcall(UnitIsUnit, unit, "player")
-            if ok2 and sameP and module.charDb then
-                module.charDb.aspectBelief = nil
+            if addon.UnitIsSame(unit, "player") and addon.charDb then
+                addon.charDb.aspectBelief = nil
+                Hunter.AspectBelief = nil
             end
         end
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         local _, _, spellID = ...
         if type(spellID) == "number" and not (_G.issecretvalue and issecretvalue(spellID))
-            and module.Compat and module.Compat.SpellInfoByID then
-            local name = module.Compat.SpellInfoByID(spellID)
+            and addon.Compat and addon.Compat.SpellInfoByID then
+            local name = addon.Compat.SpellInfoByID(spellID)
             if type(name) ~= "string" or (_G.issecretvalue and issecretvalue(name)) then
                 name = nil
             end
-            pcall(module.RegisterCast, name, spellID)
+            pcall(Hunter.RegisterCast, name, spellID)
         end
     end
 end)
 
 -- ---------------------------------------------------------------------------
--- Press suppress: when you press the button for the blinking spell, stop
--- blinking it immediately instead of waiting for the cast to land.
--- ---------------------------------------------------------------------------
-module.PressSuppress = {}
-
-function module.OnSpinPressed(button)
-    if not button or not button.GetAttribute then return end
-    local action = button:GetAttribute("action")
-    if not action then return end
-    local actionType, id = GetActionInfo(tonumber(action) or action)
-    if actionType == "spell" and id then
-        local name = module.Compat and module.Compat.SpellInfoByID and module.Compat.SpellInfoByID(id)
-        if name then
-            module.PressSuppress[name] = GetTime() + 0.6
-        end
-    end
-end
-
-function module.IsPressSuppressed(spellName)
-    if not spellName or spellName == "" then return false end
-    local untilTime = module.PressSuppress[spellName]
-    return not not (untilTime and GetTime() < untilTime)
-end
-
-module.HooksDone = false
-function module.HookActionButtonPress()
-    if module.HooksDone then return end
-    module.HooksDone = true
-    module._hookedButtons = {}
-    local function hookPrefix(prefix)
-        for i = 1, 12 do
-            local btn = _G[prefix .. i]
-            if btn and not btn.cfaPressHooked then
-                btn.cfaPressHooked = true
-                hooksecurefunc(btn, "Click", function(self)
-                    pcall(module.OnSpinPressed, self)
-                end)
-            end
-        end
-    end
-    if type(SecureActionButton_OnClick) == "function" then
-        hooksecurefunc("SecureActionButton_OnClick", function(self)
-            pcall(module.OnSpinPressed, self)
-        end)
-        return
-    end
-    local prefixes = { "ActionButton", "MultiBarRightButton", "MultiBarLeftButton",
-        "MultiBarBottomLeftButton", "MultiBarBottomRightButton",
-        "PetActionButton", "StanceButton", "PossessButton" }
-    for _, p in ipairs(prefixes) do hookPrefix(p) end
-end
-
--- ---------------------------------------------------------------------------
--- Env + AoE detection
+-- Env helpers
 -- ---------------------------------------------------------------------------
 local function countEnemiesInCombat()
     if _G.MaxDps and type(_G.MaxDps.SmartAoe) == "function" then
         local ok, n = pcall(_G.MaxDps.SmartAoe)
-        if ok and type(n) == "number" then return module.SafeNumber(n, 0) or 0 end
+        if ok and type(n) == "number" then return addon.SafeNumber(n, 0) or 0 end
     end
-    -- Fallback: no AoE detector available. Zero is safe (AoE nodes simply
-    -- won't suggest); the player can still fire them from the rotation.
     return 0
 end
 
 local function safePct(cur, max)
-    local c = module.SafeNumber(cur, nil)
-    local m = module.SafeNumber(max, nil)
+    local c = addon.SafeNumber(cur, nil)
+    local m = addon.SafeNumber(max, nil)
     if c and m and m > 0 then
         return math.floor(((c / m) * 100) + 0.5)
     end
@@ -145,9 +85,7 @@ end
 local function safePower(unit, ptype)
     if type(UnitPower) ~= "function" then return 0 end
     local ok, v = pcall(UnitPower, unit, ptype)
-    if ok then
-        return module.SafeNumber(v, 0) or 0
-    end
+    if ok then return addon.SafeNumber(v, 0) or 0 end
     return 0
 end
 
@@ -177,52 +115,25 @@ local function combatOf(unit)
     return v and true or false
 end
 
--- Melee probe: the slot of "Attack" on the action bars (engine reports range)
-local function findAttackSlot()
-    if C_ActionBar and C_ActionBar.IsAttackAction then
-        for slot = 1, 120 do
-            local ok, r = pcall(C_ActionBar.IsAttackAction, slot)
-            if ok and r then return slot end
-        end
-        return nil
-    end
-    if type(GetActionInfo) == "function" then
-        for slot = 1, 120 do
-            local actionType, id = GetActionInfo(slot)
-            if actionType == "spell" and id then
-                local name = module.SpellName(id)
-                if name and (name == "Attack" or name == "Atacar" or name == "Ataque") then
-                    return slot
-                end
-            end
-        end
-    end
-    return nil
+local function groupCount(fn)
+    if type(fn) ~= "function" then return 0 end
+    local ok, n = pcall(fn)
+    if ok and tonumber(n) then return tonumber(n) end
+    return 0
 end
 
-local function attackSlotInRange()
-    local slot = findAttackSlot()
-    if not slot then return nil end
-    if C_ActionBar and C_ActionBar.IsActionInRange then
-        local ok, r = pcall(C_ActionBar.IsActionInRange, slot)
-        if not ok then return nil end
-        if r == 1 then return true end
-        if r == 0 then return false end
-        return nil
+local function isGroupInCombat()
+    if combatOf("player") then return true end
+    for i = 1, groupCount(GetNumPartyMembers) do
+        if combatOf("party" .. i) then return true end
     end
-    return nil
+    for i = 1, groupCount(GetNumRaidMembers) do
+        if combatOf("raid" .. i) then return true end
+    end
+    return false
 end
 
-local function spellProbe(id)
-    local name = module.SpellName(id)
-    if not name or type(IsSpellInRange) ~= "function" then return nil end
-    local ok, r = pcall(IsSpellInRange, name, "target")
-    if ok and r == 1 then return true end
-    if ok and r == 0 then return false end
-    return nil
-end
-
-function module:BuildEnv()
+function Hunter:BuildEnv()
     local env = {}
     env.myHP = safePct(UnitHealth and UnitHealth("player"), UnitHealthMax and UnitHealthMax("player"))
     env.manaPct = safePct(UnitPower and UnitPower("player"), UnitPowerMax and UnitPowerMax("player"))
@@ -230,21 +141,14 @@ function module:BuildEnv()
     env.energy = safePower("player", 3)
     env.combo = safePower("player", 4)
     env.targetCasting = isCastingSomething("target")
-    env.hasActiveEnemy = module.UnitTargetExistsAndAttackable()
-    env.isPvP = module.IsPvPTarget()
+    env.hasActiveEnemy = addon.UnitTargetExistsAndAttackable()
+    env.isPvP = addon.IsPvPEnvironment()
     env.isMelee = false
     env.tooCloseForRanged = false
     env.isDeadZone = false
     env.targetDistance = nil
-    -- Distância: UnitDistanceSquared (medida) -> sondagem de slot (SFF) -> chute seguro.
-    --
-    -- Zona morta do Hunter (WotLK): corpo a corpo precisa de 5 yd e as
-    -- habilidades de longo alcance não funcionam entre 5 e 10 yd.
-    --   - isMelee           = dentro do alcance corpo a corpo (<= 5 yd)
-    --   - tooCloseForRanged = alcance longo inviável (<= 10 yd)
-    --   - isDeadZone        = 5 < distancia <= 10 (é o caso do Disengage)
-    -- Antes, isMelee e tooCloseForRanged eram sempre iguais (dist <= 10), o que
-    -- tornava a condição "dead_zone_not_melee" (Disengage) impossível.
+
+    -- Zona morta do Hunter: melee <= 5 yd; ranged inviável <= 10 yd; dead zone = 5 < d <= 10 yd.
     if UnitExists("target") then
         local dist = addon:TargetDistance("target")
         if dist then
@@ -283,119 +187,44 @@ function module:BuildEnv()
         env.isMelee = false
         env.isDeadZone = false
     end
-    env.petAlive = (type(UnitExists) == "function" and UnitExists("pet") and not (UnitIsDeadOrGhost and UnitIsDeadOrGhost("pet"))) and true or false
+
+    env.petAlive = (type(UnitExists) == "function" and UnitExists("pet")
+        and not (UnitIsDeadOrGhost and UnitIsDeadOrGhost("pet"))) and true or false
     env.inCombat = combatOf("player")
     env.isAoE = countEnemiesInCombat() >= 2
     return env
 end
 
 -- ---------------------------------------------------------------------------
--- Spec detection: override -> C_Traits points (SV wins ties) -> signature spells
--- Tree NAMES are "(sem nome)" on this client, so we map by POSITION:
--- Hunter treeIDs (stable WotLK order) are { SV, MM, BM }.
+-- Spec detection: registered in Core's shared pipeline (isolated from addon).
 -- ---------------------------------------------------------------------------
-local TREE_ORDER_HUNTER = { "SV", "MM", "BM" }
+addon:RegisterSpecDetection(Hunter, {
+    charDbKey       = "hunterSpec",
+    treeOrder       = { "SV", "MM", "BM" },
+    validSpecs      = { "SV", "MM", "BM" },
+    signatures      = {
+        { spellID = 19574,   spec = "BM", source = "Bestial Wrath" },
+        { spellID = 19306,   spec = "SV", source = "Counterattack" },
+        { spellID = 1310786, spec = "MM", source = "Sniper Shot" },
+    },
+    defaultSpec     = "SV",
+    defaultTiebreak = "SV",
+})
 
-local _talentCountCache = nil
-local function talentTreePointsByOrdinal()
-    if _talentCountCache then return _talentCountCache end
-    _talentCountCache = false
-    if not (C_ClassTalents and C_Traits) then return false end
-    local okCfg, cfg = pcall(C_ClassTalents.GetActiveConfigID)
-    if not okCfg or not cfg then return false end
-    local okInfo, info = pcall(C_Traits.GetConfigInfo, cfg)
-    if not okInfo or type(info) ~= "table" or type(info.treeIDs) ~= "table" then return false end
-    local counts = {}
-    for idx, treeID in ipairs(info.treeIDs) do
-        local specKey = TREE_ORDER_HUNTER[idx]
-        if specKey then
-            local okN, nodes = pcall(C_Traits.GetTreeNodes, treeID)
-            local total = 0
-            if type(nodes) == "table" then
-                for _, nodeID in ipairs(nodes) do
-                    local okNI, ni = pcall(C_Traits.GetNodeInfo, cfg, nodeID)
-                    if okNI and type(ni) == "table" then
-                        total = total + (tonumber(ni.currentRank) or tonumber(ni.ranksPurchased) or tonumber(ni.activeRank) or 0)
-                    end
-                end
-            end
-            counts[specKey] = total
-        end
-    end
-    _talentCountCache = { counts = counts }
-    return _talentCountCache
-end
-
-function module:DetectSpec()
-    local override = module.charDb and module.charDb.hunterSpec or nil
-    if override == "BM" or override == "MM" or override == "SV" then
-        return override, "override"
-    end
-    local cache = talentTreePointsByOrdinal()
-    local c = cache and cache.counts or nil
-    local pointsBM = c and tonumber(c.BM) or 0
-    local pointsMM = c and tonumber(c.MM) or 0
-    local pointsSV = c and tonumber(c.SV) or 0
-    local detail = string.format("C_Traits F=%d M=%d S=%d", pointsBM, pointsMM, pointsSV)
-    if pointsBM > pointsMM and pointsBM > pointsSV then return "BM", detail end
-    if pointsMM > pointsBM and pointsMM > pointsSV then return "MM", detail end
-    if pointsBM > 0 or pointsMM > 0 or pointsSV > 0 then return "SV", detail end
-    if type(IsSpellKnown) == "function" then
-        if IsSpellKnown(19574) then return "BM", "Bestial Wrath" end
-        if IsSpellKnown(19306) then return "SV", "Counterattack" end
-        if IsSpellKnown(1310786) then return "MM", "Sniper Shot" end
-    end
-    return "SV", "default"
+function Hunter:DetectSpec()
+    return addon:DetectSpec(self)
 end
 
 -- ---------------------------------------------------------------------------
--- Aspects (global management)
+-- Aspects (global Hunter management, Extra tab toggles)
 -- ---------------------------------------------------------------------------
-local function groupCount(fn)
-    if type(fn) ~= "function" then return 0 end
-    local ok, n = pcall(fn)
-    if ok and tonumber(n) then return tonumber(n) end
-    return 0
-end
-
-local function isGroupInCombat()
-    if combatOf("player") then return true end
-    for i = 1, groupCount(GetNumPartyMembers) do
-        if combatOf("party" .. i) then return true end
-    end
-    for i = 1, groupCount(GetNumRaidMembers) do
-        if combatOf("raid" .. i) then return true end
-    end
-    return false
-end
-
-local function isPvPEnvironment(env)
-    if env and env.isPvP then return true end
-    if type(GetInstanceInfo) == "function" then
-        local ok, _, instanceType = pcall(GetInstanceInfo)
-        if ok and (instanceType == "pvp" or instanceType == "arena") then return true end
-    end
-    return false
-end
-
-local function unitIsSame(unit, other)
-    if type(UnitIsUnit) ~= "function" then return false end
-    local ok, same = pcall(UnitIsUnit, unit, other)
-    if not ok or (_G.issecretvalue and issecretvalue(same)) then return false end
-    return same == true
-end
-
--- ---------------------------------------------------------------------------
--- Aspects (global management): manter a sugestão elegível até o aspecto ser
--- ativado. O loop de rotação roda a cada 0,2 s; ticks não são tentativas do jogador.
--- ---------------------------------------------------------------------------
-
 local function aspectCastable(id)
-    local knownID = module.Compat and module.Compat.HighestKnownSpellID and module.Compat.HighestKnownSpellID(id) or id
-    local spellName = module.SpellName(knownID)
+    local knownID = addon.Compat and addon.Compat.HighestKnownSpellID
+        and addon.Compat.HighestKnownSpellID(id) or id
+    local spellName = addon.SpellName(knownID)
     if not spellName then return nil, nil, "sem nome" end
     local dbg = {}
-    local ok = module.CheckCastable({
+    local ok = addon.CheckCastable({
         SpellName = spellName,
         SpellID = knownID,
         EnemyTargetNeeded = false,
@@ -420,60 +249,60 @@ local ASPECT_SUGGESTIONS = {
     Hawk = true,
 }
 
-function module:IsAspectSuggestionEnabled(key)
+function Hunter:IsAspectSuggestionEnabled(key)
     if not ASPECT_SUGGESTIONS[key] then return false end
-    local settings = module.charDb and module.charDb.hunterAspectSuggestions
+    local settings = addon.charDb and addon.charDb.hunterAspectSuggestions
     return type(settings) ~= "table" or settings[key] ~= false
 end
 
-function module:SetAspectSuggestionEnabled(key, enabled)
-    if not ASPECT_SUGGESTIONS[key] or not module.charDb then return false end
-    module.charDb.hunterAspectSuggestions = module.charDb.hunterAspectSuggestions or {}
-    local settings = module.charDb.hunterAspectSuggestions
+function Hunter:SetAspectSuggestionEnabled(key, enabled)
+    if not ASPECT_SUGGESTIONS[key] or not addon.charDb then return false end
+    addon.charDb.hunterAspectSuggestions = addon.charDb.hunterAspectSuggestions or {}
+    local settings = addon.charDb.hunterAspectSuggestions
     if enabled then
         settings[key] = nil
-        if not next(settings) then module.charDb.hunterAspectSuggestions = nil end
+        if not next(settings) then addon.charDb.hunterAspectSuggestions = nil end
     else
         settings[key] = false
     end
     return true
 end
 
-function module:ManageAspects(env)
-    -- Out of combat: Cheetah solo / Pack in group
+function Hunter:ManageAspects(env)
+    -- Out of combat: Cheetah solo / Pack in group (never in PvP/arena)
     if not isGroupInCombat() then
-        if not isPvPEnvironment(env) then
+        if not addon.IsPvPEnvironment(env) then
             local numParty = groupCount(GetNumPartyMembers)
             local numRaid = groupCount(GetNumRaidMembers)
             if numParty > 0 or numRaid > 1 then
-                if module:IsAspectSuggestionEnabled("Pack") and not module.IsAspectOfPackActive() then
+                if self:IsAspectSuggestionEnabled("Pack") and not Hunter.IsAspectOfPackActive() then
                     return suggestAspect(13159, "Utility", "Pack")
                 end
             else
-                if module:IsAspectSuggestionEnabled("Cheetah") and not module.IsAspectOfCheetahActive() then
+                if self:IsAspectSuggestionEnabled("Cheetah") and not Hunter.IsAspectOfCheetahActive() then
                     return suggestAspect(5118, "Utility", "Cheetah")
                 end
             end
         end
         return nil
     end
-    -- In combat, melee: Beast/Monkey; ranged: Hawk (damage aspect)
+    -- In combat, melee: Monkey (focused) / Beast (not focused); ranged: Hawk
     if env.tooCloseForRanged then
-        local beingFocused = unitIsSame("targettarget", "player")
+        local beingFocused = addon.UnitIsSame("targettarget", "player")
         if beingFocused then
-            if module:IsAspectSuggestionEnabled("Monkey") and not module.IsAspectOfMonkeyActive() then
+            if self:IsAspectSuggestionEnabled("Monkey") and not Hunter.IsAspectOfMonkeyActive() then
                 return suggestAspect(13163, "Utility", "Monkey")
             end
         else
-            if module:IsAspectSuggestionEnabled("Beast") and not module.IsAspectOfBeastActive() then
+            if self:IsAspectSuggestionEnabled("Beast") and not Hunter.IsAspectOfBeastActive() then
                 return suggestAspect(13161, "Utility", "Beast")
             end
         end
         return nil
     end
-    local dangerousAspect = module.IsAspectOfCheetahActive() or module.IsAspectOfPackActive()
-    if not env.tooCloseForRanged and (env.manaPct > 70 or not module.IsAspectActive() or dangerousAspect) then
-        if module:IsAspectSuggestionEnabled("Hawk") and not module.IsAspectOfHawkActive() then
+    local dangerousAspect = Hunter.IsAspectOfCheetahActive() or Hunter.IsAspectOfPackActive()
+    if not env.tooCloseForRanged and (env.manaPct > 70 or not Hunter.IsAspectActive() or dangerousAspect) then
+        if self:IsAspectSuggestionEnabled("Hawk") and not Hunter.IsAspectOfHawkActive() then
             return suggestAspect(13165, "Utility", "Hawk")
         end
     end
@@ -481,9 +310,8 @@ function module:ManageAspects(env)
 end
 
 -- ---------------------------------------------------------------------------
--- Per-character rotation overrides (enabled / condition / filter).
--- charDb.hunterRotation[specKey][nodeId] = { enabled=bool?, condition=string?,
--- filter={axis=value}? } — merged over the declared defaults on every call.
+-- Per-character rotation overrides (preserves legacy charDb.hunterRotation &
+-- charDb.hunterOrder schema so existing saved Hunter customizations survive).
 -- ---------------------------------------------------------------------------
 local function deepCopyNode(n)
     local out = {}
@@ -500,32 +328,32 @@ local function deepCopyNode(n)
 end
 
 local function rotationOverrides(specKey)
-    return module.charDb and module.charDb.hunterRotation and module.charDb.hunterRotation[specKey] or nil
+    return addon.charDb and addon.charDb.hunterRotation and addon.charDb.hunterRotation[specKey] or nil
 end
 
 local function rotationOrder(specKey)
-    return module.charDb and module.charDb.hunterOrder and module.charDb.hunterOrder[specKey] or nil
+    return addon.charDb and addon.charDb.hunterOrder and addon.charDb.hunterOrder[specKey] or nil
 end
 
-function module:GetNodeOrder(specKey)
+function Hunter:GetNodeOrder(specKey)
     local order = rotationOrder(specKey)
     if type(order) == "table" then return order end
-    local spec = module.RotationSpecs and module.RotationSpecs[specKey]
+    local spec = self.RotationSpecs and self.RotationSpecs[specKey]
     if not spec then return nil end
     local out = {}
     for _, n in ipairs(spec.nodes) do out[#out + 1] = n.id end
     return out
 end
 
-function module:SetNodeOrder(specKey, order)
-    if not module.charDb then return end
-    module.charDb.hunterOrder = module.charDb.hunterOrder or {}
-    module.charDb.hunterOrder[specKey] = order
+function Hunter:SetNodeOrder(specKey, order)
+    if not addon.charDb then return end
+    addon.charDb.hunterOrder = addon.charDb.hunterOrder or {}
+    addon.charDb.hunterOrder[specKey] = order
 end
 
-function module:MoveNode(specKey, nodeId, delta)
+function Hunter:MoveNode(specKey, nodeId, delta)
     local unpackFn = table.unpack or unpack
-    local order = module:GetNodeOrder(specKey)
+    local order = self:GetNodeOrder(specKey)
     if not order then return false end
     order = unpackFn and { unpackFn(order) } or { unpack(order) }
     local idx
@@ -534,12 +362,12 @@ function module:MoveNode(specKey, nodeId, delta)
     local j = idx + delta
     if j < 1 or j > #order then return false end
     order[idx], order[j] = order[j], order[idx]
-    module:SetNodeOrder(specKey, order)
+    self:SetNodeOrder(specKey, order)
     return true
 end
 
-function module:GetEffectiveNodes(specKey)
-    local spec = module.RotationSpecs and module.RotationSpecs[specKey]
+function Hunter:GetEffectiveNodes(specKey)
+    local spec = self.RotationSpecs and self.RotationSpecs[specKey]
     if not spec then return nil end
     local ov = rotationOverrides(specKey)
     local out = {}
@@ -563,8 +391,6 @@ function module:GetEffectiveNodes(specKey)
             out[#out + 1] = base
         end
     end
-    -- per-character custom order (^/v buttons in the editor) wins over the
-    -- declared default; nodes not in the custom list keep default position.
     local custom = rotationOrder(specKey)
     if type(custom) == "table" and #custom > 0 then
         local pos = {}
@@ -580,8 +406,8 @@ function module:GetEffectiveNodes(specKey)
     return out
 end
 
-function module:SetNodeOverride(specKey, nodeId, key, value)
-    local charDb = module.charDb
+function Hunter:SetNodeOverride(specKey, nodeId, key, value)
+    local charDb = addon.charDb
     if not charDb then return end
     charDb.hunterRotation = charDb.hunterRotation or {}
     charDb.hunterRotation[specKey] = charDb.hunterRotation[specKey] or {}
@@ -598,14 +424,14 @@ function module:SetNodeOverride(specKey, nodeId, key, value)
     ov[key] = value
 end
 
-function module:ResetRotationOverrides(specKey)
-    if module.charDb then
-        if module.charDb.hunterRotation then module.charDb.hunterRotation[specKey] = nil end
-        if module.charDb.hunterOrder then module.charDb.hunterOrder[specKey] = nil end
+function Hunter:ResetRotationOverrides(specKey)
+    if addon.charDb then
+        if addon.charDb.hunterRotation then addon.charDb.hunterRotation[specKey] = nil end
+        if addon.charDb.hunterOrder then addon.charDb.hunterOrder[specKey] = nil end
     end
 end
 
-function module.GetRotationDisabled(specKey)
+function Hunter.GetRotationDisabled(specKey)
     local ov = rotationOverrides(specKey)
     if not ov then return nil end
     local m = {}
@@ -618,44 +444,45 @@ end
 -- ---------------------------------------------------------------------------
 -- Suggestion plumbing
 -- ---------------------------------------------------------------------------
-module.TickFlashUsed = nil
-module.PendingSuggestion = nil
-module.PendingAspectSuggestion = nil
+Hunter.TickFlashUsed = nil
+Hunter.PendingSuggestion = nil
+Hunter.PendingAspectSuggestion = nil
 
-function module:Suggest(spellID, color, asAdditional)
-    if module.TickFlashUsed then return false end
-    module.TickFlashUsed = true
-    local knownID = module.Compat and module.Compat.HighestKnownSpellID and module.Compat.HighestKnownSpellID(spellID) or spellID
+function Hunter:Suggest(spellID, color, asAdditional)
+    if self.TickFlashUsed then return false end
+    self.TickFlashUsed = true
+    local knownID = addon.Compat and addon.Compat.HighestKnownSpellID
+        and addon.Compat.HighestKnownSpellID(spellID) or spellID
     local suggestion = { spellID = knownID or spellID, color = color or "Utility" }
-    if asAdditional and module.PendingSuggestion then
-        -- Adiciona como sugestão adicional (ex: Chute de Moa junto com dano principal)
-        module.PendingSuggestion.additional = module.PendingSuggestion.additional or {}
-        table.insert(module.PendingSuggestion.additional, suggestion)
+    if asAdditional and self.PendingSuggestion then
+        self.PendingSuggestion.additional = self.PendingSuggestion.additional or {}
+        table.insert(self.PendingSuggestion.additional, suggestion)
     else
-        local aspect = module.PendingAspectSuggestion
+        local aspect = self.PendingAspectSuggestion
         if aspect and aspect.spellID ~= suggestion.spellID then
             aspect.additional = { suggestion }
-            module.PendingSuggestion = aspect
+            self.PendingSuggestion = aspect
         else
-            module.PendingSuggestion = suggestion
+            self.PendingSuggestion = suggestion
         end
     end
     return true
 end
 
-function module:TryFlash(spellID, color, condition, name, env, opts, asAdditional)
-    if module.TickFlashUsed then return false end
-    local knownID = module.Compat and module.Compat.HighestKnownSpellID and module.Compat.HighestKnownSpellID(spellID) or spellID
-    local spellName = module.SpellName(knownID or spellID)
+function Hunter:TryFlash(spellID, color, condition, name, env, opts, asAdditional)
+    if self.TickFlashUsed then return false end
+    local knownID = addon.Compat and addon.Compat.HighestKnownSpellID
+        and addon.Compat.HighestKnownSpellID(spellID) or spellID
+    local spellName = addon.SpellName(knownID or spellID)
     if not spellName then
         addon:DebugPrint("tryflash", tostring(name or spellID), "BLOQUEADO: nome da spell não resolvido")
         return false
     end
-    if knownID == 3045 and module.IsRapidFireSuppressed() then
+    if knownID == 3045 and Hunter.IsRapidFireSuppressed() then
         addon:DebugPrint("tryflash", tostring(name or spellID), "BLOQUEADO: Rapid Fire ativo/em cooldown")
         return false
     end
-    if module.IsPressSuppressed(spellName) then
+    if addon:IsPressSuppressed(spellName) then
         addon:DebugPrint("tryflash", tostring(name or spellID), "BLOQUEADO: botão pressionado agora")
         return false
     end
@@ -667,7 +494,7 @@ function module:TryFlash(spellID, color, condition, name, env, opts, asAdditiona
         end
     end
     local dbg = {}
-    local castable = module.CheckCastable({
+    local castable = addon.CheckCastable({
         SpellName = spellName,
         SpellID = knownID or spellID,
         EnemyTargetNeeded = not (opts and opts.noEnemy),
@@ -675,23 +502,23 @@ function module:TryFlash(spellID, color, condition, name, env, opts, asAdditiona
         NotIfActive = (opts and opts.notIfActive) and true or nil,
         Debug = dbg,
     })
-    module.LastCastDebug = dbg
+    self.LastCastDebug = dbg
     if not castable then
         addon:DebugPrint("tryflash", tostring(name or spellID), "BLOQUEADO:", tostring(dbg.reason))
         return false
     end
     addon:DebugPrint("tryflash", tostring(name or spellID), "OK (sugere)")
-    return module:Suggest(knownID or spellID, color, asAdditional)
+    return self:Suggest(knownID or spellID, color, asAdditional)
 end
 
-function module:GetSuggestion()
+function Hunter:GetSuggestion()
     local _, myClass = UnitClass("player")
     if myClass ~= "HUNTER" then return nil end
-    if module.db and module.db.hunterEnabled == false then return nil end
-    module.TickFlashUsed = nil
-    module.PendingSuggestion = nil
-    module.PendingAspectSuggestion = nil
-    pcall(module.HookActionButtonPress)
+    if addon.db and addon.db.hunterEnabled == false then return nil end
+    self.TickFlashUsed = nil
+    self.PendingSuggestion = nil
+    self.PendingAspectSuggestion = nil
+    pcall(addon.HookActionButtonPress)
     if IsMounted and IsMounted() then
         addon:DebugPrint("GetSuggestion: montado — nada sugerido")
         return nil
@@ -701,135 +528,130 @@ function module:GetSuggestion()
         return nil
     end
 
-    local env = module:BuildEnv()
+    local env = self:BuildEnv()
     addon:DebugPrint(string.format(
-        "env enemy=%s combate=%s melee=%s longe=%s dist=%s aoe=%s hp=%s mana=%s pet=%s autoShot=%s",
+        "env enemy=%s combate=%s melee=%s longe=%s dist=%s aoe=%s pvp=%s hp=%s mana=%s pet=%s autoShot=%s",
         tostring(env.hasActiveEnemy), tostring(env.inCombat), tostring(env.isMelee),
         tostring(env.tooCloseForRanged), tostring(env.targetDistance), tostring(env.isAoE),
-        tostring(env.myHP), tostring(env.manaPct), tostring(env.petAlive), tostring(addon.AutoShoot)))
+        tostring(env.isPvP), tostring(env.myHP), tostring(env.manaPct),
+        tostring(env.petAlive), tostring(addon.AutoShoot)))
 
     -- Aspect is a parallel hint; keep evaluating the combat rotation this tick.
-    module.PendingAspectSuggestion = self:ManageAspects(env)
+    self.PendingAspectSuggestion = self:ManageAspects(env)
 
     -- Hunter's Mark
-    if env.hasActiveEnemy and not module.IsMarkedByUs() and not module.IsMarked("target") then
-        if module:TryFlash(1130, "Utility", function() return true end, "Hunter's Mark", env) then
-            return module.PendingSuggestion
+    if env.hasActiveEnemy and not Hunter.IsMarkedByUs() and not Hunter.IsMarked("target") then
+        if self:TryFlash(1130, "Utility", function() return true end, "Hunter's Mark", env) then
+            return self.PendingSuggestion
         end
     end
 
     -- Concussive Shot (PvP control / PvE aggro)
-    if env.hasActiveEnemy and not env.isMelee and not module.IsClipped("target") then
-        local beingFocused = unitIsSame("targettarget", "player")
+    if env.hasActiveEnemy and not env.isMelee and not Hunter.IsClipped("target") then
+        local beingFocused = addon.UnitIsSame("targettarget", "player")
         if env.isPvP or (env.inCombat and (beingFocused or not UnitExists("targettarget"))) then
-            if module:TryFlash(5116, "Interrupt", function() return true end, "Concussive Shot", env) then
-                return module.PendingSuggestion
+            if self:TryFlash(5116, "Interrupt", function() return true end, "Concussive Shot", env) then
+                return self.PendingSuggestion
             end
         end
     end
 
-    -- Run the spec rotation (declared data)
+    -- Run the spec rotation (declared data) via Core pipeline.
     local specKey = self:DetectSpec()
-    if specKey and module.RunDeclaredRotation then
-        module:RunDeclaredRotation(module, specKey, env)
-        if module.PendingSuggestion then return module.PendingSuggestion end
+    if specKey then
+        addon:RunDeclaredRotation(self, specKey, env)
+        if self.PendingSuggestion then return self.PendingSuggestion end
     end
 
-    -- Pet management (utilidade): vem DEPOIS da rotação da spec, para nunca
-    -- bloquear as habilidades de combate (o SFF documenta o mesmo: "Curar/
-    -- Chamar Pet piscam JUNTO com a rotação (não bloqueiam)").
+    -- Pet management (utilidade): depois da rotação da spec para nunca bloquear combate.
     if env.petAlive then
-        local mending = module.HasFamilyBuff("pet", "MendPet")
+        local mending = addon.HasFamilyBuff("pet", "MendPet")
         local petHP = 100
         if type(UnitHealth) == "function" and type(UnitHealthMax) == "function" then
             petHP = safePct(UnitHealth("pet"), UnitHealthMax("pet"))
         end
         if petHP < 70 and not mending then
-            if module:TryFlash(136, "Utility", function() return true end, "Mend Pet", env,
+            if self:TryFlash(136, "Utility", function() return true end, "Mend Pet", env,
                 { noEnemy = true, noRange = true, notIfActive = true }) then
-                return module.PendingSuggestion
+                return self.PendingSuggestion
             end
         end
     else
-        if not module.PET_IS_DEAD then
-            if module:TryFlash(883, "Utility", function() return true end, "Call Pet", env,
+        if not Hunter.PET_IS_DEAD then
+            if self:TryFlash(883, "Utility", function() return true end, "Call Pet", env,
                 { noEnemy = true, noRange = true }) then
-                return module.PendingSuggestion
+                return self.PendingSuggestion
             end
         else
-            -- Pet está morto: tenta Revive Pet (se não estiver castando já)
-            if module:TryFlash(34497, "Utility", function() return true end, "Revive Pet", env,
+            if self:TryFlash(34497, "Utility", function() return true end, "Revive Pet", env,
                 { noEnemy = true, noRange = true }) then
-                return module.PendingSuggestion
+                return self.PendingSuggestion
             end
         end
     end
 
-    -- Racial (low priority: only fires when nothing else was suggested this tick,
-    -- so it never blocks the normal rotation).
-    local core = _G.CFA
-    if core and core.SuggestRacial and core:SuggestRacial(module, env) then return module.PendingSuggestion end
-
-    -- Auto Shot (filler) — só se não estiver em auto-repetição (started by client)
-    if env.hasActiveEnemy and not env.isMelee and not addon.AutoShoot
-        and not module:IsPressSuppressed(module.SpellName(75)) then
-        if module:Suggest(75, "Damage") then return module.PendingSuggestion end
+    -- Racial (baixa prioridade: só dispara quando nada mais foi sugerido no tick).
+    if addon.SuggestRacial and addon:SuggestRacial(self, env) then
+        return self.PendingSuggestion
     end
-    return module.PendingSuggestion or module.PendingAspectSuggestion
+
+    -- Auto Shot (filler) — só se não estiver em auto-repetição.
+    if env.hasActiveEnemy and not env.isMelee and not addon.AutoShoot
+        and not addon:IsPressSuppressed(addon.SpellName(75)) then
+        if self:Suggest(75, "Damage") then return self.PendingSuggestion end
+    end
+    return self.PendingSuggestion or self.PendingAspectSuggestion
 end
 
 -- ---------------------------------------------------------------------------
 -- /cfa debug — relatório pontual da rotação no estado atual (por nó).
 -- ---------------------------------------------------------------------------
-function module.DebugRotation()
-    local specKey = module:DetectSpec()
-    local env = module:BuildEnv()
-    print("|cff44ddff[CFA dbg]|r ===== RELATÓRIO DA ROTAÇÃO =====")
-    print(string.format("|cff44ddff[CFA dbg]|r spec=%s | inimigo=%s | combate=%s | melee=%s | longe=%s | dist=%s | aoe=%s | hp=%s | mana=%s | pet=%s | autoShot=%s",
+function Hunter:DebugRotation()
+    local specKey = self:DetectSpec()
+    local env = self:BuildEnv()
+    print("|cff44ddff[CFA dbg]|r ===== RELATÓRIO DA ROTAÇÃO (Hunter) =====")
+    print(string.format(
+        "|cff44ddff[CFA dbg]|r spec=%s | inimigo=%s | combate=%s | melee=%s | longe=%s | dist=%s | aoe=%s | pvp=%s | hp=%s | mana=%s | pet=%s | autoShot=%s",
         tostring(specKey), tostring(env.hasActiveEnemy), tostring(env.inCombat), tostring(env.isMelee),
         tostring(env.tooCloseForRanged), tostring(env.targetDistance), tostring(env.isAoE),
-        tostring(env.myHP), tostring(env.manaPct), tostring(env.petAlive), tostring(addon.AutoShoot)))
+        tostring(env.isPvP), tostring(env.myHP), tostring(env.manaPct),
+        tostring(env.petAlive), tostring(addon.AutoShoot)))
     print(string.format("|cff44ddff[CFA dbg]|r aspectos: guepardo=%s matilha=%s falcão=%s besta=%s macaco=%s",
-        tostring(module.IsAspectOfCheetahActive()), tostring(module.IsAspectOfPackActive()),
-        tostring(module.IsAspectOfHawkActive()), tostring(module.IsAspectOfBeastActive()),
-        tostring(module.IsAspectOfMonkeyActive())))
+        tostring(Hunter.IsAspectOfCheetahActive()), tostring(Hunter.IsAspectOfPackActive()),
+        tostring(Hunter.IsAspectOfHawkActive()), tostring(Hunter.IsAspectOfBeastActive()),
+        tostring(Hunter.IsAspectOfMonkeyActive())))
     print("|cff44ddff[CFA dbg]|r --- nós da spec ---")
-    local nodes = module:GetEffectiveNodes(specKey) or {}
-    local preds = module.RotationPredicates or {}
+    local nodes = self:GetEffectiveNodes(specKey) or {}
     for _, node in ipairs(nodes) do
-        local condOK = true
-        if node.enabled == false then
-            condOK = false
-        elseif node.condition and node.condition ~= "" then
-            local p = preds[node.condition]
-            if type(p) == "table" and type(p.fn) == "function" then
-                local ok, r = pcall(p.fn, env)
-                condOK = ok and r and true or false
-            end
-        end
-        local name = module.SpellName(node.spellID)
-        local knownID = (module.Compat and module.Compat.HighestKnownSpellID
-            and module.Compat.HighestKnownSpellID(node.spellID)) or node.spellID
+        local condOK = node.enabled ~= false and addon.NodeConditionPass(self, env, node)
+        local knownID = (addon.Compat and addon.Compat.HighestKnownSpellID
+            and addon.Compat.HighestKnownSpellID(node.spellID)) or node.spellID
+        local name = addon.SpellName(knownID)
         local dbg = {}
         local cast = false
         if condOK and name then
-            cast = module.CheckCastable({
-                SpellName = name, SpellID = knownID,
-                EnemyTargetNeeded = true, Debug = dbg,
+            local opts = node.opts
+            cast = addon.CheckCastable({
+                SpellName = name,
+                SpellID = knownID,
+                EnemyTargetNeeded = not (opts and opts.noEnemy),
+                NoRangeCheck = (opts and opts.noRange) and true or nil,
+                NotIfActive = (opts and opts.notIfActive) and true or nil,
+                Debug = dbg,
             }) and true or false
         end
         print(string.format("|cff44ddff[CFA dbg]|r %-16s cond=%-5s known=%-5s cast=%-5s %s",
             tostring(node.id), tostring(condOK),
-            tostring(module.Compat.SpellKnown(knownID)), tostring(cast), tostring(dbg.reason or "")))
+            tostring(addon.Compat.SpellKnown(knownID)), tostring(cast), tostring(dbg.reason or "")))
     end
 end
 
 -- ---------------------------------------------------------------------------
 -- /cfa status helper
 -- ---------------------------------------------------------------------------
-function module:GetStatus()
+function Hunter:GetStatus()
     local spec, source = self:DetectSpec()
-    local enabled = not (module.db and module.db.hunterEnabled == false)
+    local enabled = not (addon.db and addon.db.hunterEnabled == false)
     local PT = (GetLocale and GetLocale() == "ptBR")
     if PT then
         return string.format("Hunter — spec %s (%s) — %s", tostring(spec), tostring(source),
@@ -840,6 +662,69 @@ function module:GetStatus()
 end
 
 -- ---------------------------------------------------------------------------
--- Register with the core
+-- Rotation editor: attach the shared editor with Hunter's specs + Extra tab.
 -- ---------------------------------------------------------------------------
-module:RegisterModule("HUNTER", module)
+local function attachHunterEditor()
+    if type(addon.RotationEditor) ~= "table"
+        or type(addon.RotationEditor.Attach) ~= "function" then
+        return false
+    end
+
+    local function Loc(key, fallback)
+        if L and L[key] then return L[key] end
+        return fallback or key
+    end
+
+    local ASPECTS = {
+        { key = "Cheetah", labelKey = "extra_aspect_cheetah", fallback = "Aspect of the Cheetah" },
+        { key = "Pack",    labelKey = "extra_aspect_pack",    fallback = "Aspect of the Pack" },
+        { key = "Monkey",  labelKey = "extra_aspect_monkey",  fallback = "Aspect of the Monkey" },
+        { key = "Beast",   labelKey = "extra_aspect_beast",   fallback = "Aspect of the Beast" },
+        { key = "Hawk",    labelKey = "extra_aspect_hawk",    fallback = "Aspect of the Hawk" },
+    }
+
+    local function renderAspectsTab(scrollChild, mod, rows)
+        local y = -4
+        for _, aspect in ipairs(ASPECTS) do
+            local aspectKey, labelKey, fallback = aspect.key, aspect.labelKey, aspect.fallback
+            local row = CreateFrame("Frame", nil, scrollChild)
+            row:SetHeight(30)
+            row:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, y)
+            row:SetPoint("TOPRIGHT", scrollChild, "TOPRIGHT", 0, y)
+
+            local check = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
+            check:SetPoint("TOPLEFT", row, "TOPLEFT", 2, -2)
+            check:SetChecked(mod:IsAspectSuggestionEnabled(aspectKey))
+            local label = row:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+            label:SetPoint("LEFT", check, "RIGHT", 4, 0)
+            label:SetText(Loc(labelKey, fallback))
+            check:SetScript("OnClick", function(self)
+                mod:SetAspectSuggestionEnabled(aspectKey, self:GetChecked() and true or false)
+            end)
+            rows[#rows + 1] = row
+            y = y - 34
+        end
+        scrollChild:SetHeight(math.max(-y, 1))
+    end
+
+    return addon.RotationEditor.Attach(Hunter, {
+        storageKey = "hunterRotation",
+        title = Loc("rotation_editor_title_hunter", "Rotation editor — Hunter"),
+        specOrder = { "BM", "MM", "SV" },
+        extraTabs = {
+            {
+                key = "EXTRA",
+                label = Loc("rotation_editor_extra", "Extra"),
+                render = renderAspectsTab,
+                hint = Loc("extra_hint", "Aspectos são independentes da rotação. Marque os que deseja receber; as condições de uso são automáticas."),
+            },
+        },
+    })
+end
+
+attachHunterEditor()
+
+-- ---------------------------------------------------------------------------
+-- Register isolated module with the core
+-- ---------------------------------------------------------------------------
+addon:RegisterModule("HUNTER", Hunter)

@@ -1,8 +1,8 @@
--- Combat Forever Assistant — Hunter module: /module tab.
--- The class the player is playing gets a tab in the menu; the tab holds the
--- module toggle, the spec override and the button that opens the rotation
--- editor window (Phase 2).
-local moduleName, module = ...
+-- Combat Forever Assistant — Hunter module: /cfa tab.
+-- Visible only to Hunters: module toggle, spec override and rotation editor button.
+local _, addon = ...
+
+local Hunter = addon.modules.HUNTER
 
 local function BuildHunterTab(parent)
     local y = -8
@@ -31,23 +31,36 @@ local function BuildHunterTab(parent)
 
     -- Toggle: module on/off (off = never suggest Hunter spells)
     checkbox("Habilitar rotação do Hunter",
-        function() return module.db.hunterEnabled ~= false end,
-        function(v) module.db.hunterEnabled = v end)
+        function() return not addon.db or addon.db.hunterEnabled ~= false end,
+        function(v) if addon.db then addon.db.hunterEnabled = v end end)
 
     y = y - 6
     header("Spec")
+
+    local radios = {}
+    local function refreshRadios()
+        local current = (addon.charDb and addon.charDb.hunterSpec) or "auto"
+        for _, entry in ipairs(radios) do
+            entry.btn:SetChecked(current == entry.value)
+        end
+    end
 
     local function radio(label, value)
         local b = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
         b:SetWidth(22)
         b:SetHeight(22)
         b:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
-        b:SetChecked((module.charDb.hunterSpec or "auto") == value)
-        b:SetScript("OnClick", function() module.charDb.hunterSpec = (value == "auto") and nil or value end)
+        b:SetScript("OnClick", function()
+            if addon.charDb then
+                addon.charDb.hunterSpec = (value == "auto") and nil or value
+            end
+            refreshRadios()
+        end)
         local fs = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         fs:SetPoint("LEFT", b, "RIGHT", 4, 0)
         fs:SetText(label)
         y = y - 26
+        radios[#radios + 1] = { btn = b, value = value }
         return b
     end
 
@@ -55,14 +68,29 @@ local function BuildHunterTab(parent)
     radio("Beast Mastery", "BM")
     radio("Marksmanship", "MM")
     radio("Survival", "SV")
+    refreshRadios()
 
     y = y - 8
-    header(module.L["rotation_editor_header"])
-    module.Options.AddRotationEditorControls(parent, y, function()
-        if type(module.OpenRotationEditor) == "function" then module.OpenRotationEditor() end
+    header("Rotação")
+
+    local openEditor = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+    openEditor:SetWidth(210)
+    openEditor:SetHeight(24)
+    openEditor:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
+    openEditor:SetText("Abrir editor de rotação")
+    openEditor:SetScript("OnClick", function()
+        if Hunter and Hunter.OpenRotationEditor then Hunter.OpenRotationEditor() end
     end)
+    y = y - 30
+
+    local hint = parent:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    hint:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, y)
+    hint:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -8, y)
+    hint:SetJustifyH("LEFT")
+    hint:SetWordWrap(true)
+    hint:SetText("O editor mostra as habilidades da rotação da spec e permite ligar/desligar, reordenar e editar condições de cada uma (por personagem).")
 end
 
-if module.Options and module.Options.RegisterTab then
-    module.Options.RegisterTab("hunter", "Hunter", "HUNTER", BuildHunterTab)
+if addon.Options and addon.Options.RegisterTab then
+    addon.Options.RegisterTab("hunter", "Hunter", "HUNTER", BuildHunterTab)
 end

@@ -143,11 +143,67 @@ local function clearPlayerSuggestions()
     if addon.KeyButton then addon.KeyButton.Hide() end
 end
 
+-- ---------------------------------------------------------------------------
+-- Press suppression (global — qualquer classe pode usar).
+-- Quando o jogador aperta o botão da skill piscando, para de piscar
+-- imediatamente em vez de esperar o cast aterrissar.
+-- ---------------------------------------------------------------------------
+addon.PressSuppress = {}
+
+function addon.OnSpinPressed(button)
+    if not button or not button.GetAttribute then return end
+    local action = button:GetAttribute("action")
+    if not action then return end
+    local actionType, id = GetActionInfo(tonumber(action) or action)
+    if actionType == "spell" and id then
+        local name = addon.Compat and addon.Compat.SpellName and addon.Compat.SpellName(id)
+        if name then
+            addon.PressSuppress[name] = GetTime() + 0.6
+        end
+    end
+end
+
+function addon:IsPressSuppressed(spellName)
+    if not spellName or spellName == "" then return false end
+    local untilTime = addon.PressSuppress[spellName]
+    return not not (untilTime and GetTime() < untilTime)
+end
+
+function addon.HookActionButtonPress()
+    if addon.HooksDone then return end
+    addon.HooksDone = true
+    addon._hookedButtons = {}
+    local function hookPrefix(prefix)
+        for i = 1, 12 do
+            local btn = _G[prefix .. i]
+            if btn and not btn.cfaPressHooked then
+                btn.cfaPressHooked = true
+                hooksecurefunc(btn, "Click", function(self)
+                    pcall(addon.OnSpinPressed, self)
+                end)
+            end
+        end
+    end
+    if type(SecureActionButton_OnClick) == "function" then
+        hooksecurefunc("SecureActionButton_OnClick", function(self)
+            pcall(addon.OnSpinPressed, self)
+        end)
+        return
+    end
+    local prefixes = { "ActionButton", "MultiBarRightButton", "MultiBarLeftButton",
+        "MultiBarBottomLeftButton", "MultiBarBottomRightButton",
+        "PetActionButton", "StanceButton", "PossessButton" }
+    for _, p in ipairs(prefixes) do hookPrefix(p) end
+end
+
 frame:SetScript("OnEvent", function(_, event, arg1, ...)
     -- caches de "spell conhecida" são invalidados quando o spellbook muda
     if (event == "SPELLS_CHANGED" or event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_LOGIN")
         and addon.Compat and addon.Compat.InvalidateSpellCaches then
         addon.Compat.InvalidateSpellCaches()
+    end
+    if event == "SPELLS_CHANGED" then
+        addon:InvalidateSpecTalentCache()
     end
     if event == "ADDON_LOADED" and arg1 == addonName then
         initDB()
@@ -163,6 +219,7 @@ frame:SetScript("OnEvent", function(_, event, arg1, ...)
         if addon.Minimap then addon.Minimap.Refresh() end
     elseif event == "PLAYER_ENTERING_WORLD" then
         if addon.Visuals then addon.Visuals.RefreshMap() end
+        addon:InvalidateSpecTalentCache()
     elseif event == "PLAYER_DEAD" then
         playerUnavailable = true
         clearPlayerSuggestions()
@@ -300,6 +357,7 @@ frame:SetScript("OnUpdate", function(_, delta)
         updateSuggestionDisplay(nil, mod)
         return
     end
+    local now = GetTime()
     local ok, suggestion = pcall(mod.GetSuggestion, mod)
     if addon.debugMode then
         if not ok then
@@ -313,9 +371,9 @@ frame:SetScript("OnUpdate", function(_, delta)
     if not ok then
         -- Never fail silently: surface the first error and throttle repeats.
         addon.lastError = tostring(suggestion)
-        local now = GetTime()
-        if now - lastErrorPrint > 10 then
-            lastErrorPrint = now
+        local now2 = GetTime()
+        if now2 - lastErrorPrint > 10 then
+            lastErrorPrint = now2
             print(string.format(L["rotation_error"] or "[CFA] Rotation error: %s", tostring(suggestion)))
         end
         return
@@ -801,12 +859,154 @@ function addon.NodeConditionPass(module, env, node, strict)
     local condition = node.condition
     if not condition or condition == "" then return true end
     local predicates = type(module) == "table" and module.RotationPredicates or nil
-    local predicate = type(predicates) == "table" and predicates[condition] or nil
+    local predicate = (type(predicates) == "table" and predicates[condition])
+        or (type(addon.RotationPredicates) == "table" and addon.RotationPredicates[condition])
+        or nil
     if type(predicate) ~= "table" or type(predicate.fn) ~= "function" then
         return not strict
     end
     local ok, result = pcall(predicate.fn, env)
     return ok and result and true or false
+end
+
+-- ---------------------------------------------------------------------------
+-- Global spec detection infrastructure (shared by all classes).
+--
+-- Pipeline (em ordem de prioridade):
+--   1) Override salvo por personagem (charDb[config.charDbKey])
+--   2) Leitura de pontos de talento via C_ClassTalents / C_Traits
+--      (mapeamento ordinal de treeIDs, pois nomes de árvores podem ser
+--      vazios/genéricos no cliente Forever), com cache e proteção pcall.
+--   3) Fallback por IsSpellKnown de spells assinatura (config.signatures)
+--   4) defaultSpec / defaultTiebreak
+--
+-- Cada módulo de classe chama addon:RegisterSpecDetection(module, config)
+-- uma vez no carregamento, informando apenas seus dados específicos
+-- (chaves de spec, ordem das árvores, spells assinatura, chave de override).
+-- ---------------------------------------------------------------------------
+addon.SpecDetectionConfigs = {}
+local _talentCache = {}
+
+local function specCacheKey(classTag)
+    return classTag or "unknown"
+end
+
+function addon:RegisterSpecDetection(module, config)
+    if type(module) ~= "table" or type(config) ~= "table" then return false end
+    if type(config.charDbKey) ~= "string" then return false end
+    if type(config.treeOrder) ~= "table" or #config.treeOrder == 0 then return false end
+    if type(config.validSpecs) ~= "table" then config.validSpecs = {} end
+    if type(config.signatures) ~= "table" then config.signatures = {} end
+    if type(config.defaultSpec) ~= "string" then config.defaultSpec = config.validSpecs[1] end
+    if type(config.defaultTiebreak) ~= "string" then config.defaultTiebreak = config.defaultSpec end
+
+    local classTag = module.classTag or moduleName or "unknown"
+    self.SpecDetectionConfigs[classTag] = config
+    module._specConfig = config
+    return true
+end
+
+function addon:GetSpecConfig(module)
+    if type(module) ~= "table" then return nil end
+    local classTag = module.classTag or moduleName or "unknown"
+    return self.SpecDetectionConfigs[classTag]
+end
+
+-- Invalida o cache de talentos de uma classe (ou de todas, se classTag for nil).
+function addon:InvalidateSpecTalentCache(classTag)
+    if classTag then
+        _talentCache[specCacheKey(classTag)] = nil
+    else
+        wipe(_talentCache)
+    end
+end
+
+local function readTalentPointsOrdinal(config)
+    if not (C_ClassTalents and C_Traits) then return false end
+    local okCfg, cfg = pcall(C_ClassTalents.GetActiveConfigID)
+    if not okCfg or not cfg then return false end
+    if _G.issecretvalue and issecretvalue(cfg) then return false end
+
+    local okInfo, info = pcall(C_Traits.GetConfigInfo, cfg)
+    if not okInfo or type(info) ~= "table" or type(info.treeIDs) ~= "table" then return false end
+
+    local counts = {}
+    for idx, treeID in ipairs(info.treeIDs) do
+        local specKey = config.treeOrder[idx]
+        if specKey then
+            local okN, nodes = pcall(C_Traits.GetTreeNodes, treeID)
+            local total = 0
+            if type(nodes) == "table" then
+                for _, nodeID in ipairs(nodes) do
+                    local okNI, ni = pcall(C_Traits.GetNodeInfo, cfg, nodeID)
+                    if okNI and type(ni) == "table" then
+                        total = total + (addon.SafeNumber(ni.currentRank)
+                            or addon.SafeNumber(ni.ranksPurchased)
+                            or addon.SafeNumber(ni.activeRank) or 0)
+                    end
+                end
+            end
+            counts[specKey] = total
+        end
+    end
+    return counts
+end
+
+function addon:DetectSpec(module)
+    if type(module) ~= "table" then return nil, "no module" end
+    local config = self:GetSpecConfig(module)
+    if not config then return nil, "no spec config" end
+
+    -- 1) Override salvo por personagem
+    local charDb = module.charDb or addon.charDb
+    if type(charDb) == "table" then
+        local override = charDb[config.charDbKey]
+        for _, valid in ipairs(config.validSpecs) do
+            if override == valid then return override, "override" end
+        end
+    end
+
+    -- 2) Leitura de talentos via C_ClassTalents / C_Traits (ordinal, cacheada 1x por sessão/SPELLS_CHANGED)
+    local cacheKey = specCacheKey(module.classTag or "unknown")
+    local cached = _talentCache[cacheKey]
+    if cached == nil then
+        cached = readTalentPointsOrdinal(config) or false
+        _talentCache[cacheKey] = cached
+    end
+    if type(cached) == "table" then
+        local selected, best, hasPoints, tied = config.defaultSpec, -1, false, false
+        for _, specKey in ipairs(config.treeOrder) do
+            local points = tonumber(cached[specKey]) or 0
+            if points > 0 then hasPoints = true end
+            if points > best then
+                selected, best, tied = specKey, points, false
+            elseif points == best then
+                tied = true
+            end
+        end
+        if hasPoints then
+            if tied and config.defaultTiebreak and (tonumber(cached[config.defaultTiebreak]) or 0) == best then
+                selected = config.defaultTiebreak
+            end
+            local parts = {}
+            for _, s in ipairs(config.treeOrder) do
+                parts[#parts + 1] = s .. "=" .. tostring(tonumber(cached[s]) or 0)
+            end
+            return selected, "C_Traits " .. table.concat(parts, " ")
+        end
+    end
+
+    -- 3) Fallback por IsSpellKnown de spells assinatura
+    if type(IsSpellKnown) == "function" then
+        for _, sig in ipairs(config.signatures) do
+            if type(sig.spellID) == "number" and IsSpellKnown(sig.spellID) then
+                return sig.spec, sig.source or "talent signature"
+            end
+        end
+    end
+
+    -- 4) Fallback padrão
+    return config.defaultSpec, "default"
 end
 
 -- ---------------------------------------------------------------------------
@@ -957,6 +1157,7 @@ local ACTION_SLOT_CACHE_FRAME = CreateFrame("Frame")
 ACTION_SLOT_CACHE_FRAME:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
 ACTION_SLOT_CACHE_FRAME:RegisterEvent("ACTIONBAR_PAGE_CHANGED")
 ACTION_SLOT_CACHE_FRAME:RegisterEvent("UPDATE_BONUS_ACTIONBAR")
+ACTION_SLOT_CACHE_FRAME:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
 ACTION_SLOT_CACHE_FRAME:RegisterEvent("PLAYER_ENTERING_WORLD")
 ACTION_SLOT_CACHE_FRAME:SetScript("OnEvent", function() wipe(ACTION_SLOT_CACHE) end)
 
@@ -1696,7 +1897,8 @@ function addon:RunDeclaredRotation(module, specKey, env)
     -- Modules may merge per-character overrides (enabled/condition/filter)
     local nodes = (type(module.GetEffectiveNodes) == "function" and module:GetEffectiveNodes(specKey)) or spec.nodes
     if type(nodes) ~= "table" then return false end
-    local disabled = (type(module.GetRotationDisabled) == "function" and module.GetRotationDisabled(specKey)) or nil
+    local disabled = (type(module.GetRotationDisabled) == "function" and module:GetRotationDisabled(specKey)) or nil
+
     for _, node in ipairs(nodes) do
         if node.enabled ~= false and not (disabled and disabled[node.id]) then
             local pass = addon.NodeConditionPass(module, env, node)
@@ -1834,7 +2036,7 @@ SlashCmdList["COMBATFOREVERASSISTANT"] = function(msg)
         addon.debugMode = (msg == "debug on") and true or not addon.debugMode
         print("|cff44ddff[CFA]|r modo debug: " .. (addon.debugMode and "LIGADO" or "DESLIGADO"))
         if addon.debugMode and addon.activeModule and addon.activeModule.DebugRotation then
-            addon.activeModule.DebugRotation()
+            addon.activeModule:DebugRotation()
         end
     elseif msg == "debug off" then
         addon.debugMode = false

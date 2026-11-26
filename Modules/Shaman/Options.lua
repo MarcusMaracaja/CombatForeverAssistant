@@ -2,14 +2,7 @@ local addonName, addon = ...
 local module = addon.modules.SHAMAN
 local L = addon.L
 
-addon.RotationEditor.Attach(module, {
-    title = L["shaman_tab"],
-    storageKey = "shamanRotation",
-    specOrder = { "ELE", "ENH", "REST" },
-})
-
-local function BuildShamanTab(host)
-    local parent, setContentHeight = addon.Options.CreateScrollableTab(host)
+local function BuildShamanTab(parent)
     local y = -8
     local radioButtons = {}
     local radioValues = { "auto", "ELE", "ENH", "REST" }
@@ -77,9 +70,7 @@ local function BuildShamanTab(host)
     end
     refreshSpecButtons()
 
-    header(L["rotation_editor_header"])
-    y = addon.Options.AddRotationEditorControls(parent, y, module.OpenRotationEditor,
-        L["shaman_rotation_hint"])
+    hint(L["shaman_rotation_hint"])
     header(L["shaman_extra_header"])
     hint(L["shaman_extra_hint"])
 
@@ -96,7 +87,6 @@ local function BuildShamanTab(host)
             module:SetExtraSuggestionEnabled(key, enabled)
         end)
     end
-    setContentHeight(-y + 12)
 end
 
 if addon.Options and addon.Options.RegisterTab then

@@ -2,14 +2,14 @@
 -- Order: shared melee/dead-zone prefix, then the Forever MM chain:
 --   Scatter Shot -> Rapid Fire / Sniper Shot -> Aimed (single target) ->
 --   Multi-Shot / Volley (AoE) -> Stings -> Arcane Shot.
-local moduleName, module = ...
+local _, addon = ...
 
-local Hunter = module
+local Hunter = addon.modules.HUNTER
 Hunter.RotationSpecs = Hunter.RotationSpecs or {}
 
 Hunter.RotationSpecs.MM = {
     title = "Marksmanship",
-    nodes = module:ConcatCommonNodes(Hunter.HunterMeleeNodes, {
+    nodes = addon:ConcatCommonNodes(Hunter.HunterMeleeNodes, {
         { id = "scatter_shot",   spellID = 19503,   name = "Scatter Shot",   color = "Interrupt", condition = "enemy_interruptible_not_cc" },
         { id = "rapid_fire",     spellID = 3045,    name = "Rapid Fire",     color = "Damage",    condition = "enemy_in_combat_not_too_close", passthrough = true },
         { id = "sniper_shot",    spellID = 1310786, name = "Sniper Shot",    color = "Damage",    condition = "enemy_in_combat_not_too_close", passthrough = true },

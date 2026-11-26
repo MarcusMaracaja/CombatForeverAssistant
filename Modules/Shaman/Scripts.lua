@@ -131,38 +131,8 @@ function module:SetSpecOverride(specKey)
 end
 
 function module:DetectSpec()
-    local override = addon.charDb.shamanSpec
-    if override == "ELE" or override == "ENH" or override == "REST" then
-        return override, "override"
-    end
-
-    local counts = talentPoints()
-    if counts then
-        local bestKey, bestPoints, hasPoints = "ELE", 0, false
-        for _, key in ipairs(TREE_ORDER) do
-            local points = numberValue(counts[key]) or 0
-            if points > bestPoints then
-                bestKey, bestPoints = key, points
-            end
-            if points > 0 then hasPoints = true end
-        end
-        if hasPoints then
-            return bestKey, string.format("C_Traits ELE=%d ENH=%d REST=%d",
-                numberValue(counts.ELE) or 0, numberValue(counts.ENH) or 0,
-                numberValue(counts.REST) or 0)
-        end
-    end
-
-    if Compat.SpellKnown(17364) or Compat.SpellKnown(425336) or Compat.SpellKnown(16256) then
-        return "ENH", "talent signature"
-    end
-    if Compat.SpellKnown(16166) then
-        return "ELE", "talent signature"
-    end
-    if Compat.SpellKnown(16188) then
-        return "REST", "talent signature"
-    end
-    return "ELE", "default"
+    -- Pipeline global: override -> talentos (C_Traits ordinal) -> signatures -> default.
+    return addon:DetectSpec(self)
 end
 
 function module:IsExtraSuggestionEnabled(key)
@@ -710,5 +680,21 @@ function module:DebugRotation()
         "enemy=", env.hasActiveEnemy, "combat=", env.inCombat, "melee=", env.isMelee,
         "mana=", env.manaPct, "aoe=", env.isAoE, "maelstrom=", maelstromStacks())
 end
+
+-- Registro da configuração de detecção de spec do Shaman no núcleo global.
+addon:RegisterSpecDetection(module, {
+    charDbKey   = "shamanSpec",
+    treeOrder   = { "ELE", "ENH", "REST" },
+    validSpecs  = { "ELE", "ENH", "REST" },
+    signatures  = {
+        { spellID = 17364,  spec = "ENH", source = "talent signature" }, -- Stormstrike
+        { spellID = 425336, spec = "ENH", source = "talent signature" }, -- Rage of the Farseer
+        { spellID = 16256,  spec = "ENH", source = "talent signature" },
+        { spellID = 16166,  spec = "ELE", source = "talent signature" }, -- Lightning Mastery
+        { spellID = 16188,  spec = "REST", source = "talent signature" }, -- Nature's Swiftness
+    },
+    defaultSpec     = "ELE",
+    defaultTiebreak = "ELE",
+})
 
 addon:RegisterModule("SHAMAN", module)

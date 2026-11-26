@@ -100,7 +100,7 @@ end
 local function spellName(spellID)
     local id = resolveSpellID(spellID) or spellID
     local name = Compat.SpellInfoByID(id)
-    if type(name) == "string" and name ~= "" and not isSecret(name) then return name end
+    if type(name) == "string" and not isSecret(name) and name ~= "" then return name end
     return nil
 end
 
@@ -170,45 +170,54 @@ local function talentTreePoints()
     if not okInfo or type(config) ~= "table" or type(config.treeIDs) ~= "table" then return nil end
 
     local counts = {}
+    local totalPoints = 0
+    local positionedNodes = {}
     for index, treeID in ipairs(config.treeIDs) do
-        local specKey
-        if C_Traits.GetTreeInfo then
-            local okTree, treeInfo = pcall(C_Traits.GetTreeInfo, configID, treeID)
-            local label = okTree and type(treeInfo) == "table"
-                and (treeInfo.displayName or treeInfo.name) or nil
-            if type(label) == "string" and not isSecret(label) then
-                label = label:lower()
-                if label:find("balance", 1, true) or label:find("equil", 1, true) then
-                    specKey = "BAL"
-                elseif label:find("feral", 1, true) then
-                    specKey = "FER"
-                elseif label:find("restor", 1, true) or label:find("restaur", 1, true) then
-                    specKey = "REST"
+        local okNodes, nodeIDs = pcall(C_Traits.GetTreeNodes, treeID)
+        if okNodes and type(nodeIDs) == "table" then
+            for _, nodeID in ipairs(nodeIDs) do
+                local okNode, nodeInfo = pcall(C_Traits.GetNodeInfo, configID, nodeID)
+                if okNode and type(nodeInfo) == "table" then
+                    local points = (safeNumber(nodeInfo.currentRank) or safeNumber(nodeInfo.ranksPurchased) or safeNumber(nodeInfo.activeRank) or 0)
+                    totalPoints = totalPoints + points
+                    local x = safeNumber(nodeInfo.posX)
+                    if x ~= nil then positionedNodes[#positionedNodes + 1] = { x = x, points = points } end
                 end
             end
         end
-        specKey = specKey or TREE_ORDER[index]
-        if specKey then
-            local okNodes, nodeIDs = pcall(C_Traits.GetTreeNodes, treeID)
-            local points = 0
-            if okNodes and type(nodeIDs) == "table" then
-                for _, nodeID in ipairs(nodeIDs) do
-                    local okNode, nodeInfo = pcall(C_Traits.GetNodeInfo, configID, nodeID)
-                    if okNode and type(nodeInfo) == "table" then
-                        points = points + (safeNumber(nodeInfo.currentRank)
-                            or safeNumber(nodeInfo.ranksPurchased)
-                            or safeNumber(nodeInfo.activeRank) or 0)
-                    end
-                end
-            end
-            counts[specKey] = (counts[specKey] or 0) + points
+    end
+    
+    -- Se não houver pontos distribuídos, não há spec.
+    if totalPoints == 0 then return { BAL=0, FER=0, REST=0 } end
+
+    -- Detecção posicional (eixo X)
+    table.sort(positionedNodes, function(a, b) return a.x < b.x end)
+    local groups = {}
+    for _, node in ipairs(positionedNodes) do
+        local group = groups[#groups]
+        if not group or node.x - group.hi > 1200 then
+            group = { lo = node.x, hi = node.x, points = 0 }
+            groups[#groups + 1] = group
         end
+        group.hi = node.x
+        group.points = group.points + node.points
     end
-    if next(counts) then
-        module.talentCache = counts
-        return counts
-    end
-    return nil
+    
+    local sortedGroups = {}
+    for _, g in ipairs(groups) do table.insert(sortedGroups, g) end
+    table.sort(sortedGroups, function(a, b) return a.points > b.points end)
+    
+    -- Mapear os 3 grupos com mais pontos para BAL, FER, REST
+    local columns = {}
+    for i = 1, math.min(#groups, 3) do columns[#columns + 1] = sortedGroups[i] end
+    table.sort(columns, function(a, b) return a.lo < b.lo end)
+    
+    counts.BAL = (columns[1] and columns[1].points) or 0
+    counts.FER = (columns[2] and columns[2].points) or 0
+    counts.REST = (columns[3] and columns[3].points) or 0
+    
+    module.talentCache = counts
+    return counts
 end
 
 local TREE_ORDER_DRUID = { "BAL", "FER", "REST" }
@@ -362,13 +371,19 @@ function module:SetExtraSuggestionEnabled(key, enabled)
 end
 
 function module:DetectSpec()
-    local talentSpec, source = detectedTalentSpec()
-    if talentSpec ~= "FER" then return talentSpec, source end
+    -- Pipeline global: override -> talentos (C_Traits ordinal) -> signatures -> default.
+    local specKey, source = addon:DetectSpec(self)
+
+    -- Pós-processamento específico do Druid: a forma atual tem precedência sobre
+    -- talentos quando o jogador está em forma felina/ursina/lunar/árvore.
     local form = activeForm()
-    if form == "CAT" or form == "BEAR" then return form, source .. " / form" end
-    local preference = addon.charDb.druidFeralForm
-    if preference ~= "CAT" and preference ~= "BEAR" then preference = "CAT" end
-    return preference, source .. " / preference"
+    if form == "CAT" then return "CAT", "form" end
+    if form == "BEAR" then return "BEAR", "form" end
+    if form == "MOONKIN" then return "BAL", "form" end
+    if form == "TREE" then return "REST", "form" end
+
+    -- Humanoide: retorna o que o pipeline global detectou (talentos/override/default).
+    return specKey, source
 end
 
 local function unitExists(unit)
@@ -512,11 +527,11 @@ end
 local function isCasting(unit)
     if type(UnitCastingInfo) == "function" then
         local ok, name = pcall(UnitCastingInfo, unit)
-        if ok and type(name) == "string" and name ~= "" and not isSecret(name) then return true end
+        if ok and type(name) == "string" and not isSecret(name) and name ~= "" then return true end
     end
     if type(UnitChannelInfo) == "function" then
         local ok, name = pcall(UnitChannelInfo, unit)
-        if ok and type(name) == "string" and name ~= "" and not isSecret(name) then return true end
+        if ok and type(name) == "string" and not isSecret(name) and name ~= "" then return true end
     end
     return false
 end
@@ -551,14 +566,14 @@ local function isTargetInterruptible()
     if not unitExists("target") then return false end
     if type(UnitCastingInfo) == "function" then
         local ok, name, _, _, _, _, _, _, notInterruptible = pcall(UnitCastingInfo, "target")
-        if ok and type(name) == "string" and name ~= "" and not isSecret(name)
+        if ok and type(name) == "string" and not isSecret(name) and name ~= ""
             and not isSecret(notInterruptible) then
             return notInterruptible ~= true
         end
     end
     if type(UnitChannelInfo) == "function" then
         local ok, name, _, _, _, _, _, notInterruptible = pcall(UnitChannelInfo, "target")
-        if ok and type(name) == "string" and name ~= "" and not isSecret(name)
+        if ok and type(name) == "string" and not isSecret(name) and name ~= ""
             and not isSecret(notInterruptible) then
             return notInterruptible ~= true
         end
@@ -898,7 +913,7 @@ module.RotationSpecs = {
                 opts = { noRangeCheck = true } },
             { id = "mangle_bear", spellID = 33878, name = "Mangle (Bear)",
                 color = "Damage", condition = "bear_needs_mangle" },
-            { id = "lacerate", spellID = 33745, name = "Lacerate",
+            { id = "lacerate", spellID = 5422, name = "Lacerate",
                 color = "Damage", condition = "bear_needs_lacerate" },
             { id = "swipe_bear", spellID = 779, name = "Swipe (Bear)",
                 color = "AoE", condition = "bear_aoe" },
@@ -1091,5 +1106,24 @@ function module:DebugRotation()
             node.condition, "conditionOK=", conditionOK)
     end
 end
+
+-- Registro da configuração de detecção de spec do Druid no núcleo global.
+addon:RegisterSpecDetection(module, {
+    charDbKey   = "druidSpec",
+    treeOrder   = { "BAL", "FER", "REST" },
+    validSpecs  = { "BAL", "FER", "REST" },
+    signatures  = {
+        { spellID = 24858,  spec = "BAL", source = "talent signature" },
+        { spellID = 18562,  spec = "REST", source = "talent signature" },
+        { spellID = 33891,  spec = "REST", source = "talent signature" },
+        { spellID = 65139,  spec = "REST", source = "talent signature" },
+        { spellID = 33876,  spec = "FER", source = "talent signature" },
+        { spellID = 33878,  spec = "FER", source = "talent signature" },
+        { spellID = 16979,  spec = "FER", source = "talent signature" },
+        { spellID = 33745,  spec = "FER", source = "talent signature" },
+    },
+    defaultSpec     = "BAL",
+    defaultTiebreak = "BAL",
+})
 
 addon:RegisterModule("DRUID", module)

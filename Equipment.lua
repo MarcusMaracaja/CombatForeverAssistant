@@ -323,8 +323,8 @@ local function buildEquipmentTab(parent)
         local info = rule.itemID and itemInfo(tonumber(rule.itemID))
         row.itemIcon:SetTexture(info and info.texture or QUESTION_MARK)
         row.itemText:SetText(info and info.name or L["equip_select_item"])
-        row.summary:SetText(addon.Hunter and addon.Hunter.NodeConditionText
-            and addon.Hunter.NodeConditionText(rule) or L["rot_no_condition"])
+        row.summary:SetText(addon.RotationEditor and addon.RotationEditor.NodeConditionText
+            and addon.RotationEditor.NodeConditionText(rule, addon.activeModule) or L["rot_no_condition"])
         row.removeButton:SetEnabled(rule.condition ~= nil or (type(rule.filter) == "table" and next(rule.filter) ~= nil))
     end
 
@@ -391,7 +391,7 @@ local function buildEquipmentTab(parent)
         row.itemText:SetPoint("RIGHT", itemButton, "RIGHT", -4, 0)
         row.itemText:SetJustifyH("LEFT")
         itemButton:SetScript("OnClick", function()
-            local picker = addon.Hunter and addon.Hunter.ShowPicker
+            local picker = addon.RotationEditor and addon.RotationEditor.ShowPicker
             if picker then
                 picker(itemButton, L["equip_select_item"], function() return itemChoices(slotDef, row) end,
                     function() refreshRow(row, slotDef) end)
@@ -404,7 +404,7 @@ local function buildEquipmentTab(parent)
         row.addButton:SetText("+")
         row.addButton:SetScript("OnClick", function()
             local rule = ruleFor(slotDef.key, true)
-            local picker = addon.Hunter and addon.Hunter.ShowConditionPicker
+            local picker = addon.RotationEditor and addon.RotationEditor.ShowConditionPicker
             if picker then
                 picker(row.addButton, rule, function(key, value)
                     local updated = ruleFor(slotDef.key, true)
@@ -420,7 +420,7 @@ local function buildEquipmentTab(parent)
         row.removeButton:SetText("-")
         row.removeButton:SetScript("OnClick", function()
             local rule = ruleFor(slotDef.key, false)
-            local picker = addon.Hunter and addon.Hunter.ShowRemoveConditionPicker
+            local picker = addon.RotationEditor and addon.RotationEditor.ShowRemoveConditionPicker
             if rule and picker then
                 picker(row.removeButton, rule, function(key, value)
                     local updated = ruleFor(slotDef.key, true)

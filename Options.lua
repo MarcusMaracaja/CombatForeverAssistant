@@ -189,7 +189,7 @@ local function createPanel()
     end)
 
     frame:SetScript("OnHide", function()
-        if addon.Hunter and addon.Hunter.HidePicker then addon.Hunter.HidePicker() end
+        if addon.RotationEditor and addon.RotationEditor.HidePicker then addon.RotationEditor.HidePicker() end
     end)
     tinsert(UISpecialFrames, "CFA_OptionsFrame")
     return frame
@@ -337,7 +337,7 @@ local function getContentFrame(id)
 end
 
 function Options.SelectTab(id)
-    if addon.Hunter and addon.Hunter.HidePicker then addon.Hunter.HidePicker() end
+    if addon.RotationEditor and addon.RotationEditor.HidePicker then addon.RotationEditor.HidePicker() end
     currentTab = id
     if not frame then createPanel() end
     for otherId, f in pairs(contentFrames) do f:Hide() end
