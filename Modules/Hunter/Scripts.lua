@@ -312,18 +312,15 @@ function Hunter:ManageAspects(env)
 
     local dangerousAspect = Hunter.IsAspectOfCheetahActive() or Hunter.IsAspectOfPackActive()
 
-    -- 2) Somente muda para Falcão/Águia se houver alvo inimigo E distância confirmada de longe
-    if env.hasActiveEnemy and env.isRangedConfirmed then
-        local highMana = type(addon.HasManaPct) == "function" and (addon.HasManaPct(71)) or ((env.manaPct or 100) > 70)
-        if highMana or not Hunter.IsAspectActive() or dangerousAspect then
-            if self:IsAspectSuggestionEnabled("Hawk") and not Hunter.IsAspectOfHawkActive() then
-                return suggestAspect(13165, "Utility", "Hawk")
-            end
+    -- 2) Em combate + tenho alvo + alvo está longe -> Aspecto do Falcão/Águia
+    if env.hasActiveEnemy and not env.tooCloseForRanged then
+        if self:IsAspectSuggestionEnabled("Hawk") and not Hunter.IsAspectOfHawkActive() then
+            return suggestAspect(13165, "Utility", "Hawk")
         end
         return nil
     end
 
-    -- 3) Caso contrário (em combate sem alvo ou sem confirmação de longe):
+    -- 3) Em combate sem alvo inimigo:
     --    fica no aspecto atual se já estiver em um aspecto seguro de combate;
     --    se estiver sem aspecto ou em Guepardo/Matilha, muda para Macaco (atacado) ou Fera (não atacado).
     if dangerousAspect or not Hunter.IsAspectActive() then
