@@ -727,12 +727,15 @@ function Editor.Attach(module, config)
         solidBg:SetTexture("Interface\\Buttons\\WHITE8X8")
         solidBg:SetVertexColor(0.02, 0.02, 0.02, 1)
         solidBg:SetAllPoints()
-        panel:SetScript("OnHide", function() Editor.HidePicker() end)
+        panel:SetScript("OnHide", function()
+            Editor.HidePicker()
+            if addon.Options and addon.Options.HideHelp then addon.Options.HideHelp() end
+        end)
         if type(UISpecialFrames) == "table" then table.insert(UISpecialFrames, frameName) end
 
         local drag = CreateFrame("Frame", nil, panel)
         drag:SetPoint("TOPLEFT", panel, "TOPLEFT", 0, 0)
-        drag:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -40, 0)
+        drag:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -74, 0)
         drag:SetHeight(34)
         drag:EnableMouse(true)
         drag:SetScript("OnMouseDown", function(_, button)
@@ -754,6 +757,15 @@ function Editor.Attach(module, config)
         closeLabel:SetText("X")
         closeLabel:SetTextColor(1, 0.25, 0.25, 1)
         close:SetScript("OnClick", function() panel:Hide() end)
+
+        if addon.Options and type(addon.Options.CreateInfoButton) == "function" then
+            local infoBtn = addon.Options.CreateInfoButton(panel, function()
+                local t = (config.title or translate("rotation_editor_title", "Rotation editor"))
+                    .. " — " .. translate("info_help_suffix", "Ajuda")
+                return t, translate("help_rotation_editor", translate("help_default", ""))
+            end)
+            infoBtn:SetPoint("RIGHT", close, "LEFT", -6, 0)
+        end
 
         local spacing = 6
         local totalButtons = #specKeys + #extraTabs

@@ -94,7 +94,7 @@ local function createPanel()
     -- Drag strip (top bar) — the window moves by dragging it
     local drag = CreateFrame("Frame", nil, frame)
     drag:SetPoint("TOPLEFT", 0, 0)
-    drag:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -52, 0) -- keep clear of the close X
+    drag:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -74, 0) -- keep clear of info "i" and close X
     drag:SetHeight(34)
     drag:EnableMouse(true)
     drag:SetScript("OnMouseDown", function(self)
@@ -140,6 +140,16 @@ local function createPanel()
     close:SetScript("OnClick", function() frame:Hide() end)
     close:SetScript("OnEnter", function(self) self.txt:SetTextColor(1, 0.45, 0.45, 1) end)
     close:SetScript("OnLeave", function(self) self.txt:SetTextColor(1, 0.25, 0.25, 1) end)
+
+    -- Info "i" button (explains the currently selected tab)
+    local infoBtn = Options.CreateInfoButton(frame, function()
+        local tab = tabs[currentTab]
+        local tabTitle = (tab and tab.title) or tostring(currentTab or "")
+        local helpKey = "help_" .. tostring(currentTab or "")
+        local body = (tab and tab.helpText) or L[helpKey] or L["help_default"]
+        return tabTitle .. " — " .. (L["info_help_suffix"] or "Ajuda"), body
+    end)
+    infoBtn:SetPoint("RIGHT", close, "LEFT", -6, 0)
 
     -- Sidebar
     local sidebar = CreateFrame("Frame", nil, frame)
@@ -189,6 +199,7 @@ local function createPanel()
     end)
 
     frame:SetScript("OnHide", function()
+        Options.HideHelp()
         if addon.RotationEditor and addon.RotationEditor.HidePicker then addon.RotationEditor.HidePicker() end
     end)
     tinsert(UISpecialFrames, "CFA_OptionsFrame")
@@ -267,8 +278,117 @@ local function refreshTabButtons()
     end
 end
 
-function Options.RegisterTab(id, title, classTag, buildFunc)
-    tabs[id] = { title = title, classTag = classTag, build = buildFunc }
+-- ---------------------------------------------------------------------------
+-- Shared Help Popup & "i" Info Button (used by all /cfa tabs & secondary windows)
+-- ---------------------------------------------------------------------------
+local helpPopup
+
+local function getHelpPopup()
+    if helpPopup then return helpPopup end
+    helpPopup = CreateFrame("Frame", "CFA_HelpPopup", UIParent, "BackdropTemplate")
+    helpPopup:SetWidth(340)
+    helpPopup:SetFrameStrata("TOOLTIP")
+    helpPopup:SetToplevel(true)
+    helpPopup:SetClampedToScreen(true)
+    helpPopup:SetAlpha(1)
+    helpPopup:EnableMouse(true)
+    applyBackdrop(helpPopup, 0.04, 0.04, 0.04, 1.0)
+    local solidBg = helpPopup:CreateTexture(nil, "BACKGROUND")
+    solidBg:SetTexture("Interface\\Buttons\\WHITE8X8")
+    solidBg:SetVertexColor(0.04, 0.04, 0.04, 1.0)
+    solidBg:SetAllPoints()
+
+    local title = helpPopup:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    title:SetPoint("TOPLEFT", 12, -10)
+    title:SetPoint("TOPRIGHT", -34, -10)
+    title:SetJustifyH("LEFT")
+    title:SetTextColor(ORANGE[1], ORANGE[2], ORANGE[3], 1)
+    helpPopup.title = title
+
+    local close = CreateFrame("Button", nil, helpPopup)
+    close:SetSize(20, 20)
+    close:SetPoint("TOPRIGHT", -6, -6)
+    close.txt = close:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    close.txt:SetPoint("CENTER", 0, 1)
+    close.txt:SetText("X")
+    close.txt:SetTextColor(1, 0.25, 0.25, 1)
+    close:SetScript("OnClick", function() helpPopup:Hide() end)
+
+    local sep = helpPopup:CreateTexture(nil, "ARTWORK")
+    sep:SetTexture("Interface\\Buttons\\WHITE8X8")
+    sep:SetVertexColor(ORANGE[1], ORANGE[2], ORANGE[3], 0.35)
+    sep:SetHeight(1)
+    sep:SetPoint("TOPLEFT", 10, -28)
+    sep:SetPoint("TOPRIGHT", -10, -28)
+
+    local body = helpPopup:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    body:SetPoint("TOPLEFT", 12, -36)
+    body:SetPoint("TOPRIGHT", -12, -36)
+    body:SetJustifyH("LEFT")
+    body:SetWordWrap(true)
+    helpPopup.body = body
+
+    helpPopup:Hide()
+    if type(UISpecialFrames) == "table" then table.insert(UISpecialFrames, "CFA_HelpPopup") end
+    return helpPopup
+end
+
+function Options.HideHelp()
+    if helpPopup then helpPopup:Hide() end
+end
+
+function Options.ShowHelp(anchorBtn, titleText, bodyText)
+    local p = getHelpPopup()
+    if p:IsShown() and p.owner == anchorBtn and p.lastTitle == titleText then
+        p:Hide()
+        return
+    end
+    p.owner = anchorBtn
+    p.lastTitle = titleText
+    p.title:SetText(tostring(titleText or "Ajuda"))
+    p.body:SetText(tostring(bodyText or L["help_default"] or ""))
+    local textHeight = p.body:GetStringHeight() or 80
+    p:SetHeight(math.max(90, math.min(460, textHeight + 52)))
+    p:ClearAllPoints()
+    p:SetPoint("TOPRIGHT", anchorBtn, "BOTTOMRIGHT", 0, -4)
+    p:Raise()
+    p:Show()
+end
+
+function Options.CreateInfoButton(parent, getHelpFn)
+    local btn = CreateFrame("Button", nil, parent, "BackdropTemplate")
+    btn:SetSize(22, 22)
+    btn:SetFrameLevel(parent:GetFrameLevel() + 20)
+    applyBackdrop(btn, 0.08, 0.14, 0.18, 0.95)
+    local txt = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    txt:SetPoint("CENTER", 0, 0)
+    txt:SetText("i")
+    txt:SetTextColor(0.35, 0.85, 1.0, 1)
+    btn.txt = txt
+    btn:SetScript("OnEnter", function(self)
+        self.txt:SetTextColor(1, 0.9, 0.4, 1)
+        if GameTooltip then
+            GameTooltip:SetOwner(self, "ANCHOR_TOP")
+            GameTooltip:SetText(L["info_btn_tooltip"] or "Clique para ver para que serve esta aba", 1, 1, 1, true)
+            GameTooltip:Show()
+        end
+    end)
+    btn:SetScript("OnLeave", function(self)
+        self.txt:SetTextColor(0.35, 0.85, 1.0, 1)
+        if GameTooltip then GameTooltip:Hide() end
+    end)
+    btn:SetScript("OnClick", function(self)
+        if GameTooltip then GameTooltip:Hide() end
+        if type(getHelpFn) == "function" then
+            local t, b = getHelpFn()
+            Options.ShowHelp(self, t, b)
+        end
+    end)
+    return btn
+end
+
+function Options.RegisterTab(id, title, classTag, buildFunc, helpText)
+    tabs[id] = { title = title, classTag = classTag, build = buildFunc, helpText = helpText }
     if frame then Options.SelectTab(currentTab) end
 end
 
@@ -341,6 +461,7 @@ local function getContentFrame(id)
 end
 
 function Options.SelectTab(id)
+    Options.HideHelp()
     if addon.RotationEditor and addon.RotationEditor.HidePicker then addon.RotationEditor.HidePicker() end
     currentTab = id
     if not frame then createPanel() end
