@@ -151,6 +151,7 @@ function Hunter:BuildEnv()
     env.isMelee = false
     env.tooCloseForRanged = false
     env.isDeadZone = false
+    env.isRangedConfirmed = false
     env.targetDistance = nil
 
     -- Zona morta do Hunter: melee <= 5 yd; ranged inviável <= 10 yd; dead zone = 5 < d <= 10 yd.
@@ -161,6 +162,7 @@ function Hunter:BuildEnv()
             env.isMelee = dist <= 5
             env.tooCloseForRanged = dist <= 10
             env.isDeadZone = (dist > 5 and dist <= 10)
+            env.isRangedConfirmed = dist > 10
         else
             local melee = addon:IsInMeleeRange("target")
             local deadZone = addon:IsInDeadZoneRange("target")
@@ -179,6 +181,7 @@ function Hunter:BuildEnv()
                 env.isMelee = false
                 env.tooCloseForRanged = false
                 env.isDeadZone = false
+                env.isRangedConfirmed = true
             else
                 env.targetDistance = 100
                 env.isMelee = false
@@ -291,9 +294,10 @@ function Hunter:ManageAspects(env)
         end
         return nil
     end
-    -- In combat, melee: Monkey (focused) / Beast (not focused); ranged: Hawk
-    if env.tooCloseForRanged then
-        local beingFocused = addon.UnitIsSame("targettarget", "player")
+    -- In combat:
+    -- 1) Perto/melee com alvo inimigo -> Macaco (sendo atacado) ou Fera (não sendo atacado)
+    local beingFocused = env.hasActiveEnemy and addon.UnitIsSame("targettarget", "player") or false
+    if env.hasActiveEnemy and env.tooCloseForRanged then
         if beingFocused then
             if self:IsAspectSuggestionEnabled("Monkey") and not Hunter.IsAspectOfMonkeyActive() then
                 return suggestAspect(13163, "Utility", "Monkey")
@@ -305,11 +309,32 @@ function Hunter:ManageAspects(env)
         end
         return nil
     end
+
     local dangerousAspect = Hunter.IsAspectOfCheetahActive() or Hunter.IsAspectOfPackActive()
-    local highMana = type(addon.HasManaPct) == "function" and (addon.HasManaPct(71)) or ((env.manaPct or 100) > 70)
-    if not env.tooCloseForRanged and (highMana or not Hunter.IsAspectActive() or dangerousAspect) then
-        if self:IsAspectSuggestionEnabled("Hawk") and not Hunter.IsAspectOfHawkActive() then
-            return suggestAspect(13165, "Utility", "Hawk")
+
+    -- 2) Somente muda para Falcão/Águia se houver alvo inimigo E distância confirmada de longe
+    if env.hasActiveEnemy and env.isRangedConfirmed then
+        local highMana = type(addon.HasManaPct) == "function" and (addon.HasManaPct(71)) or ((env.manaPct or 100) > 70)
+        if highMana or not Hunter.IsAspectActive() or dangerousAspect then
+            if self:IsAspectSuggestionEnabled("Hawk") and not Hunter.IsAspectOfHawkActive() then
+                return suggestAspect(13165, "Utility", "Hawk")
+            end
+        end
+        return nil
+    end
+
+    -- 3) Caso contrário (em combate sem alvo ou sem confirmação de longe):
+    --    fica no aspecto atual se já estiver em um aspecto seguro de combate;
+    --    se estiver sem aspecto ou em Guepardo/Matilha, muda para Macaco (atacado) ou Fera (não atacado).
+    if dangerousAspect or not Hunter.IsAspectActive() then
+        if beingFocused then
+            if self:IsAspectSuggestionEnabled("Monkey") and not Hunter.IsAspectOfMonkeyActive() then
+                return suggestAspect(13163, "Utility", "Monkey")
+            end
+        else
+            if self:IsAspectSuggestionEnabled("Beast") and not Hunter.IsAspectOfBeastActive() then
+                return suggestAspect(13161, "Utility", "Beast")
+            end
         end
     end
     return nil
