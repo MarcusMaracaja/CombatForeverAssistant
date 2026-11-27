@@ -195,6 +195,54 @@ Checklist mantida a cada implementação para validação posterior no cliente *
 ### Se algo não funcionar como esperado
 - Copie e cole a saída completa de `/cfa warrior` (e `/cfa res` se a questão envolver leitura de raiva) durante o combate para afinarmos qualquer Spell ID ou postura no Forever.
 
+---
 
+## H-0239 — Correção de Comida & Água nas Bolsas + Catálogo de IDs/Tiers + Expansão Automática para Poções de Combate
 
+### O que foi corrigido / expandido
+- **`Consumables.lua`**:
+  - Corrigido falso-positivo em `nameLooksLikeDrink` (antes casava `"água"` / `"agua"`, fazendo buffs como *Escudo de Água* / *Andar sobre a Água* travarem `drinking=true` e suprimirem recomendações fora de combate).
+  - Adicionado dobramento UTF-8 (`foldPT`) para acentos em ptBR (`Á/É/Í/Ó/Ú/Ç`) e reconhecimento de `"comer"` / `"beber"` / `"sentada"`.
+  - Corrigido envenenamento de cache quando o tooltip do item ainda não tinha carregado (`tipText == ""`).
+  - Adicionado catálogo explícito por `itemID` com `tier` e `restore` (`KNOWN_FOODS`, `KNOWN_DRINKS`, `KNOWN_HEAL_POTIONS` incluindo Pedras de Vida, `KNOWN_MANA_POTIONS`, e `LONG_BUFF_ITEMS` com `tier` + correção do ID `13444` -> `13453` para *Elixir of Brute Force*), combinado com fallback dinâmico por tooltip para itens customizados do WoW Forever.
+  - **Nova seção na aba Food, Potions, Itens**: **Poções de Combate** (checkbox + slider de % para **Poção de Vida** e, em classes com mana, **Poção de Mana**), escolhendo automaticamente a poção mais valiosa/forte usável na bolsa/barra durante o combate.
+- **`Visuals.lua`**:
+  - Corrigida detecção de botões de bolsa (`GetSlotAndBagID()`, `EnumerateValidItems` 1 ou 2 retornos, `container.Items`, `ContainerFrame<N>Item<slot>`, **ElvUI** e **Bagnon**).
+  - Corrigido `SetFrameStrata` / `SetFrameLevel(+10)` em `DashRing`, moldura e texturas para o brilho nunca ficar escondido atrás do ícone do slot da bolsa.
+- **`Core.lua`**:
+  - Corrigido `Visuals.Hide()` rodando a cada tick de 0,2s (que destruía e recriava overlays 5x/s).
+  - Corrigido `IsEatingOrDrinking()` para suprimir a rotação de classe sem apagar o brilho do par faltante (ex.: permite Comida + Água brilharem juntas e a Água continuar brilhando enquanto começa a comer).
 
+### Comandos de diagnóstico disponíveis no chat
+- `/cfa items` — agora mostra também:
+  - Frames de bolsa abertos detectados (`bagOpen=true (ContainerFrameCombinedBags)` ou `ElvUI_ContainerFrame` etc.);
+  - Melhor Comida, Melhor Bebida, Melhor Poção de Vida e Melhor Poção de Mana (com `tier`, `valor`, `restore`, `bagBtns=N` e `barBtns=M`);
+  - Quantos botões de bolsa (`bagBtns`) e de barra (`barBtns`) foram encontrados para cada sugestão ativa;
+  - Lista completa de **todos os consumíveis (`classID=0`) na bolsa** com `[itemID] nome | sub | price | spell | flags=F/D/HP/MP/LB | tipLen`, facilitando diagnosticar instantaneamente qualquer item exclusivo do WoW Forever.
+
+### Checklist de testes (Comida, Água e Poções)
+1. **[ ] Diagnóstico inicial com bolsa aberta (`/cfa items`)**
+   - Fazer `/reload`, abrir a bolsa com comida, água e poções dentro e rodar `/cfa items`.
+   - Esperado:
+     - `bagOpen=true (<nome do frame da bolsa>)` aparece no chat (tanto na UI padrão quanto com ElvUI/Bagnon);
+     - `Melhor Comida`, `Melhor Bebida`, `Melhor Poção de Vida` e `Melhor Poção de Mana` aparecem com `bagBtns >= 1`;
+     - Mesmo com **Escudo de Água** ativo (no Xamã), `drinking=false`!
+2. **[ ] Comida e Água brilhando na bolsa (fora de combate, parado)**
+   - Em `/cfa` -> **Food, Potions, Itens**, marcar **Recomendar Comida (Vida)** (ex.: `90%`) e **Recomendar Água (Mana)** (ex.: `90%`).
+   - Ficar fora de combate, parado, com Vida e Mana abaixo do limite e abrir a bolsa.
+   - Esperado: o item de Comida mais forte/valioso e o item de Água mais forte/valioso brilham **visivelmente por cima do ícone da bolsa** (testar nos estilos Círculo, Moldura, Chama, Raio e Zoom).
+   - Se colocar mais de uma comida/água na bolsa (ex.: água conjurada + água barata de NPC), confirmar que brilha a de maior tier/restauração (e que itens acima do seu nível são ignorados).
+3. **[ ] Comida + Água simultâneos e parada ao comer/beber**
+   - Com ambos brilhando, clicar primeiro na Comida: o brilho da Comida deve apagar imediatamente, enquanto a Água **continua brilhando** até você clicar nela também.
+   - Assim que estiver comendo e bebendo: nenhum brilho de rotação de classe nem de poção de bônus deve aparecer.
+4. **[ ] Poções de Combate (Vida e Mana — automático)**
+   - Na nova seção **Poções de Combate**, marcar **Recomendar Poção de Vida** (ex.: `75%` para testar fácil) e, em classe com mana, **Recomendar Poção de Mana** (ex.: `75%`).
+   - Em classe sem mana (Guerreiro/Ladino): confirmar que **Recomendar Poção de Mana** fica oculta.
+   - Entrar em combate e deixar a vida/mana cair abaixo do % configurado (com a bolsa aberta ou com a poção na barra).
+   - Esperado: a poção de vida/mana (ou Pedra de Vida) de maior tier/restauração usável no seu nível brilha automaticamente; ao beber a poção, o brilho some imediatamente durante a recarga.
+5. **[ ] Poções de Bônus / Elixires / Pergaminhos (5+ min)**
+   - Marcar a seção de poções de bônus (5+ min) com 2 elixires/pergaminhos da mesma categoria de tiers diferentes na bolsa (ex.: Pergaminho de Vigor II e IV).
+   - Esperado: brilha apenas o de maior tier; ao usar, o brilho some imediatamente.
+
+### Se algo não funcionar como esperado
+- Abra a bolsa com as comidas/águas/poções, fique na situação em que deveria brilhar e cole na próxima sessão a saída completa de `/cfa items` (a nova seção `Todos consumíveis (classID=0) escaneados na bolsa` e os valores de `bagBtns` / `bagOpen` vão mostrar a causa exata na hora).

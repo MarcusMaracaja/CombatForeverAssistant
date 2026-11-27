@@ -1,9 +1,10 @@
 -- Combat Forever Assistant — Food, Potions & Items module.
 -- Independent from class rotation modules: scans bags and action bars for:
 --   1) Best Food (HP) and Drink/Water (Mana, mana classes only) out of combat while standing still
---   2) Long-duration (5+ min) bonus potions, elixirs, flasks and scrolls missing from player buffs
---   3) User-configured situational item rules ([+] button): water breath, engineering bombs,
---      emergency HP/Mana potions, or triggering an item right after casting a chosen ability.
+--   2) Best Combat Healing Potion (HP) and Mana Potion (Mana, mana classes only) during combat
+--   3) Long-duration (5+ min) bonus potions, elixirs, flasks and scrolls missing from player buffs
+--   4) User-configured situational item rules ([+] button): water breath, engineering bombs,
+--      or triggering an item right after casting a chosen ability.
 -- Highlights items on open bags, on action bars, or both simultaneously.
 
 local addonName, addon = ...
@@ -53,10 +54,31 @@ local function now()
     return ok and safeNum(t, 0) or 0
 end
 
+local PT_FOLD_MAP = {
+    ["\195\128"] = "a", ["\195\129"] = "a", ["\195\130"] = "a", ["\195\131"] = "a", ["\195\132"] = "a",
+    ["\195\160"] = "a", ["\195\161"] = "a", ["\195\162"] = "a", ["\195\163"] = "a", ["\195\164"] = "a",
+    ["\195\136"] = "e", ["\195\137"] = "e", ["\195\138"] = "e", ["\195\139"] = "e",
+    ["\195\168"] = "e", ["\195\169"] = "e", ["\195\170"] = "e", ["\195\171"] = "e",
+    ["\195\140"] = "i", ["\195\141"] = "i", ["\195\142"] = "i", ["\195\143"] = "i",
+    ["\195\172"] = "i", ["\195\173"] = "i", ["\195\174"] = "i", ["\195\175"] = "i",
+    ["\195\146"] = "o", ["\195\147"] = "o", ["\195\148"] = "o", ["\195\149"] = "o", ["\195\150"] = "o",
+    ["\195\178"] = "o", ["\195\179"] = "o", ["\195\180"] = "o", ["\195\181"] = "o", ["\195\182"] = "o",
+    ["\195\153"] = "u", ["\195\154"] = "u", ["\195\155"] = "u", ["\195\156"] = "u",
+    ["\195\185"] = "u", ["\195\186"] = "u", ["\195\187"] = "u", ["\195\188"] = "u",
+    ["\195\135"] = "c", ["\195\167"] = "c",
+    ["\195\145"] = "n", ["\195\177"] = "n",
+}
+
+-- Lua's :lower() does not fold UTF-8 accented capitals (Á, É, Ç, etc.); fold to ASCII first.
+local function foldPT(s)
+    if type(s) ~= "string" or s == "" then return "" end
+    return (s:gsub("\195[\128-\191]", PT_FOLD_MAP)):lower()
+end
+
 local function normalizeText(s)
     s = safeStr(s)
     if not s then return "" end
-    return (s:lower():gsub("%s*%b()%s*$", ""):gsub("^%s+", ""):gsub("%s+$", ""))
+    return (foldPT(s):gsub("%s*%b()%s*$", ""):gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
 local function loc(key, fallback)
@@ -215,22 +237,33 @@ local state = {
     lastCastSummary = nil,
 }
 
-local function nameLooksLikeFood(lowerName)
-    return lowerName == "food" or lowerName == "comida"
-        or lowerName:find("food", 1, true) ~= nil
-        or lowerName:find("comida", 1, true) ~= nil
-        or lowerName:find("refei", 1, true) ~= nil
-        or lowerName:find("aliment", 1, true) ~= nil
+local function nameLooksLikeFood(foldedName)
+    if type(foldedName) ~= "string" or foldedName == "" then return false end
+    if foldedName:find("well fed", 1, true) or foldedName:find("bem alimentad", 1, true) then
+        return false
+    end
+    return foldedName == "food" or foldedName == "comida" or foldedName == "comer"
+        or foldedName == "eating" or foldedName == "comendo"
+        or foldedName:find("food", 1, true) ~= nil
+        or foldedName:find("comida", 1, true) ~= nil
+        or foldedName:find("comer", 1, true) ~= nil
+        or foldedName:find("comendo", 1, true) ~= nil
+        or foldedName:find("refeic", 1, true) ~= nil
+        or foldedName:find("aliment", 1, true) ~= nil
 end
 
-local function nameLooksLikeDrink(lowerName)
-    return lowerName == "drink" or lowerName == "bebida"
-        or lowerName:find("drink", 1, true) ~= nil
-        or lowerName:find("bebida", 1, true) ~= nil
-        or lowerName:find("refresco", 1, true) ~= nil
-        or lowerName:find("refreshment", 1, true) ~= nil
-        or lowerName:find("água", 1, true) ~= nil
-        or lowerName:find("agua", 1, true) ~= nil
+local function nameLooksLikeDrink(foldedName)
+    if type(foldedName) ~= "string" or foldedName == "" then return false end
+    -- Intentionally does NOT match generic "agua" to avoid false positives on
+    -- buffs like "Escudo de Agua" (Water Shield) or "Andar sobre a Agua" (Water Walking).
+    return foldedName == "drink" or foldedName == "bebida" or foldedName == "beber"
+        or foldedName == "drinking" or foldedName == "bebendo"
+        or foldedName:find("drink", 1, true) ~= nil
+        or foldedName:find("bebida", 1, true) ~= nil
+        or foldedName:find("beber", 1, true) ~= nil
+        or foldedName:find("bebendo", 1, true) ~= nil
+        or foldedName:find("refresco", 1, true) ~= nil
+        or foldedName:find("refreshment", 1, true) ~= nil
 end
 
 local function collectPlayerAuras()
@@ -276,8 +309,8 @@ local function checkEatingDrinking(aurasByID, aurasByName)
         end
     end
     for nm in pairs(aurasByName) do
-        -- Ignore "Well Fed" / "Bem Alimentado" for active eating check
-        local isWellFed = nm:find("well fed", 1, true) or nm:find("bem alimentado", 1, true)
+        -- Ignore "Well Fed" / "Bem Alimentado(a)" for active eating check
+        local isWellFed = nm:find("well fed", 1, true) or nm:find("bem alimentad", 1, true)
         if not isWellFed then
             if nameLooksLikeFood(nm) then eating = true end
             if nameLooksLikeDrink(nm) then drinking = true end
@@ -297,92 +330,292 @@ function Consumables.IsEatingOrDrinking()
 end
 
 -- ---------------------------------------------------------------------------
+-- Curated item-ID catalogs with explicit tier & restore values so known Classic /
+-- TBC / WotLK / WoW Forever consumables are always recognized immediately (even
+-- before tooltips load or when sellPrice == 0, such as Conjured food/water).
+-- Custom WoW Forever items not in these tables are also detected dynamically
+-- via UTF-8-safe tooltip inspection below.
+-- ---------------------------------------------------------------------------
+local KNOWN_FOODS = {
+    -- Tier 10 (lvl 1, ~61 HP)
+    [117]   = { tier = 10, restore = 61 },   -- Tough Jerky
+    [787]   = { tier = 10, restore = 61 },   -- Slitherskin Mackerel
+    [2070]  = { tier = 10, restore = 61 },   -- Darnassian Bleu
+    [4536]  = { tier = 10, restore = 61 },   -- Shiny Red Apple
+    [4540]  = { tier = 10, restore = 61 },   -- Tough Hunk of Bread
+    [4604]  = { tier = 10, restore = 61 },   -- Forest Mushroom Cap
+    [5349]  = { tier = 10, restore = 61 },   -- Conjured Muffin
+    [2679]  = { tier = 12, restore = 61 },   -- Charred Wolf Meat
+    [2680]  = { tier = 12, restore = 61 },   -- Spiced Wolf Meat
+    [2681]  = { tier = 12, restore = 61 },   -- Roasted Boar Meat
+    [6888]  = { tier = 12, restore = 61 },   -- Herb Baked Egg
+    [12224] = { tier = 12, restore = 61 },   -- Crispy Bat Wing
+    [17197] = { tier = 12, restore = 61 },   -- Gingerbread Cookie
+    -- Tier 20 (lvl 5, ~243 HP)
+    [414]   = { tier = 20, restore = 243 },  -- Dalaran Sharp
+    [1113]  = { tier = 20, restore = 243 },  -- Conjured Bread
+    [2287]  = { tier = 20, restore = 243 },  -- Haunch of Meat
+    [4537]  = { tier = 20, restore = 243 },  -- Tel'Abim Banana
+    [4541]  = { tier = 20, restore = 243 },  -- Freshly Baked Bread
+    [4592]  = { tier = 20, restore = 243 },  -- Longjaw Mud Snapper
+    [4605]  = { tier = 20, restore = 243 },  -- Red-speckled Mushroom
+    [2684]  = { tier = 22, restore = 243 },  -- Coyote Steak
+    [2687]  = { tier = 22, restore = 243 },  -- Dry Pork Ribs
+    [3220]  = { tier = 22, restore = 243 },  -- Blood Sausage
+    [5472]  = { tier = 22, restore = 243 },  -- Kaldorei Spider Kabob
+    [5474]  = { tier = 22, restore = 243 },  -- Roasted Kodo Meat
+    [5525]  = { tier = 22, restore = 243 },  -- Boiled Clams
+    [6290]  = { tier = 22, restore = 243 },  -- Brilliant Smallfish
+    -- Tier 30 (lvl 15, ~552 HP)
+    [422]   = { tier = 30, restore = 552 },  -- Dwarven Mild
+    [1114]  = { tier = 30, restore = 552 },  -- Conjured Rye
+    [3770]  = { tier = 30, restore = 552 },  -- Mutton Chop
+    [4538]  = { tier = 30, restore = 552 },  -- Snapvine Watermelon
+    [4542]  = { tier = 30, restore = 552 },  -- Moist Cornbread
+    [4593]  = { tier = 30, restore = 552 },  -- Bristle Whisker Catfish
+    [4606]  = { tier = 30, restore = 552 },  -- Spongy Morel
+    [1082]  = { tier = 32, restore = 552 },  -- Redridge Goulash
+    [2685]  = { tier = 32, restore = 552 },  -- Succulent Pork Ribs
+    [3662]  = { tier = 32, restore = 552 },  -- Crocolisk Steak
+    [3726]  = { tier = 32, restore = 552 },  -- Big Bear Steak
+    [5477]  = { tier = 32, restore = 552 },  -- Strider Stew
+    [5526]  = { tier = 32, restore = 552 },  -- Clam Chowder
+    -- Tier 40 (lvl 25, ~874 HP)
+    [1487]  = { tier = 40, restore = 874 },  -- Conjured Pumpernickel
+    [1707]  = { tier = 40, restore = 874 },  -- Stormwind Brie
+    [3771]  = { tier = 40, restore = 874 },  -- Wild Hog Shank
+    [4539]  = { tier = 40, restore = 874 },  -- Goldenbark Apple
+    [4544]  = { tier = 40, restore = 874 },  -- Mulgore Spice Bread
+    [4594]  = { tier = 40, restore = 874 },  -- Rockscale Cod
+    [4607]  = { tier = 40, restore = 874 },  -- Delicious Cave Mold
+    [3727]  = { tier = 42, restore = 874 },  -- Hot Lion Chops
+    [3728]  = { tier = 42, restore = 874 },  -- Tasty Lion Steak
+    [4457]  = { tier = 42, restore = 874 },  -- Barbecued Buzzard Wing
+    [12209] = { tier = 42, restore = 874 },  -- Lean Wolf Steak
+    [12210] = { tier = 42, restore = 874 },  -- Roast Raptor
+    [12213] = { tier = 42, restore = 874 },  -- Carrion Surprise
+    [13851] = { tier = 42, restore = 874 },  -- Hot Wolf Ribs
+    -- Tier 50 (lvl 35, ~1392 HP)
+    [3927]  = { tier = 50, restore = 1392 }, -- Fine Aged Cheddar
+    [4599]  = { tier = 50, restore = 1392 }, -- Cured Ham Steak
+    [4601]  = { tier = 50, restore = 1392 }, -- Soft Banana Bread
+    [4602]  = { tier = 50, restore = 1392 }, -- Moon Harvest Pumpkin
+    [4608]  = { tier = 50, restore = 1392 }, -- Raw Black Truffle
+    [8075]  = { tier = 50, restore = 1392 }, -- Conjured Sourdough
+    [8950]  = { tier = 50, restore = 1392 }, -- Homemade Cherry Pie
+    [8952]  = { tier = 50, restore = 1392 }, -- Roasted Quail
+    [8957]  = { tier = 50, restore = 1392 }, -- Spinefin Halibut
+    [12215] = { tier = 52, restore = 1392 }, -- Heavy Kodo Stew
+    [12216] = { tier = 52, restore = 1392 }, -- Spider Sausage
+    [12218] = { tier = 52, restore = 1392 }, -- Monster Omelet
+    [13928] = { tier = 52, restore = 1392 }, -- Grilled Squid
+    [13931] = { tier = 52, restore = 1392 }, -- Nightfin Soup
+    -- Tier 60 (lvl 45-55, ~2148-2550 HP)
+    [8076]  = { tier = 60, restore = 2148 }, -- Conjured Sweet Roll
+    [8932]  = { tier = 60, restore = 2148 }, -- Alterac Swiss
+    [8948]  = { tier = 60, restore = 2148 }, -- Dried King Bolete
+    [8953]  = { tier = 60, restore = 2148 }, -- Deep Fried Plantains
+    [13724] = { tier = 62, restore = 2148 }, -- Enriched Manna Biscuit (Food + Drink)
+    [16169] = { tier = 60, restore = 2148 }, -- Wild Ricecake
+    [18254] = { tier = 62, restore = 2148 }, -- Runn Tum Tuber Surprise
+    [19301] = { tier = 65, restore = 2148 }, -- Alterac Manna Biscuit (Food + Drink)
+    [20452] = { tier = 65, restore = 2550 }, -- Smoked Desert Dumplings
+    [21023] = { tier = 65, restore = 2550 }, -- Dirge's Kickin' Chimaerok Chops
+    [22895] = { tier = 68, restore = 3180 }, -- Conjured Cinnamon Roll
+    -- Tier 70-80 (TBC / WotLK / Forever high-level)
+    [27854] = { tier = 70, restore = 4320 }, -- Smoked Talbuk Venison
+    [27855] = { tier = 70, restore = 4320 }, -- Mag'har Grainbread
+    [27856] = { tier = 70, restore = 4320 }, -- Skethyl Berries
+    [27857] = { tier = 70, restore = 4320 }, -- Garadar Sharp
+    [27858] = { tier = 70, restore = 4320 }, -- Sunspring Carp
+    [27859] = { tier = 70, restore = 4320 }, -- Zangar Caps
+    [22019] = { tier = 72, restore = 7500 }, -- Conjured Croissant
+    [33443] = { tier = 75, restore = 7500 }, -- Sour Goat Cheese
+    [33449] = { tier = 78, restore = 15000 }, -- Crusty Flatbread
+    [33451] = { tier = 78, restore = 15000 }, -- Fillet of Icefin
+    [33454] = { tier = 80, restore = 22500 }, -- Salted Venison
+    [35950] = { tier = 80, restore = 22500 }, -- Sweet Potato Bread
+    [43518] = { tier = 82, restore = 22500 }, -- Conjured Mana Pie (Food + Drink)
+    [43523] = { tier = 85, restore = 22500 }, -- Conjured Mana Strudel (Food + Drink)
+}
+
+local KNOWN_DRINKS = {
+    -- Tier 10 (lvl 1, ~151 Mana)
+    [159]   = { tier = 10, restore = 151 },  -- Refreshing Spring Water
+    [5350]  = { tier = 12, restore = 151 },  -- Conjured Water
+    -- Tier 20 (lvl 5, ~436 Mana)
+    [1179]  = { tier = 20, restore = 436 },  -- Ice Cold Milk
+    [2288]  = { tier = 22, restore = 436 },  -- Conjured Fresh Water
+    -- Tier 30 (lvl 15, ~835 Mana)
+    [1205]  = { tier = 30, restore = 835 },  -- Melon Juice
+    [2136]  = { tier = 32, restore = 835 },  -- Conjured Purified Water
+    [9451]  = { tier = 31, restore = 835 },  -- Bubbling Water
+    -- Tier 40 (lvl 25, ~1344 Mana)
+    [1708]  = { tier = 40, restore = 1344 }, -- Sweet Nectar
+    [3772]  = { tier = 42, restore = 1344 }, -- Conjured Spring Water
+    [10841] = { tier = 41, restore = 1344 }, -- Goldthorn Tea
+    -- Tier 50 (lvl 35, ~1992 Mana)
+    [1645]  = { tier = 50, restore = 1992 }, -- Moonberry Juice
+    [8077]  = { tier = 52, restore = 1992 }, -- Conjured Mineral Water
+    [19299] = { tier = 51, restore = 1992 }, -- Fizzy Faire Drink
+    -- Tier 60 (lvl 45-55, ~2934-4410 Mana)
+    [8766]  = { tier = 60, restore = 2934 }, -- Morning Glory Dew
+    [8078]  = { tier = 61, restore = 2934 }, -- Conjured Sparkling Water
+    [13724] = { tier = 62, restore = 2934 }, -- Enriched Manna Biscuit (Food + Drink)
+    [18300] = { tier = 63, restore = 3500 }, -- Hyjal Nectar
+    [19301] = { tier = 64, restore = 4410 }, -- Alterac Manna Biscuit (Food + Drink)
+    [8079]  = { tier = 68, restore = 4200 }, -- Conjured Crystal Water
+    -- Tier 70-85 (TBC / WotLK / Forever high-level)
+    [27860] = { tier = 70, restore = 7200 }, -- Purified Draenic Water
+    [28399] = { tier = 70, restore = 7200 }, -- Filtered Draenic Water
+    [22018] = { tier = 72, restore = 7200 }, -- Conjured Glacier Water
+    [30703] = { tier = 74, restore = 7200 }, -- Conjured Mountain Spring Water
+    [33444] = { tier = 76, restore = 11340 }, -- Pungent Seal Whey
+    [33445] = { tier = 80, restore = 19920 }, -- Honeymint Tea
+    [43518] = { tier = 82, restore = 19920 }, -- Conjured Mana Pie (Food + Drink)
+    [43523] = { tier = 85, restore = 19920 }, -- Conjured Mana Strudel (Food + Drink)
+}
+
+local KNOWN_HEAL_POTIONS = {
+    -- Instant Healing Potions
+    [118]   = { tier = 10, restore = 80 },   -- Minor Healing Potion
+    [4596]  = { tier = 15, restore = 160 },  -- Discolored Healing Potion
+    [858]   = { tier = 20, restore = 160 },  -- Lesser Healing Potion
+    [929]   = { tier = 30, restore = 320 },  -- Healing Potion
+    [1710]  = { tier = 40, restore = 525 },  -- Greater Healing Potion
+    [3928]  = { tier = 50, restore = 800 },  -- Superior Healing Potion
+    [18839] = { tier = 55, restore = 1375 }, -- Combat Healing Potion
+    [17348] = { tier = 58, restore = 1375 }, -- Major Healing Draught
+    [13446] = { tier = 60, restore = 1400 }, -- Major Healing Potion
+    [18253] = { tier = 62, restore = 1600 }, -- Major Rejuvenation Potion (HP + Mana)
+    [22829] = { tier = 70, restore = 2000 }, -- Super Healing Potion
+    [33447] = { tier = 80, restore = 3500 }, -- Runic Healing Potion
+    -- Warlock Healthstones (independent CD from potions!)
+    [5512]  = { tier = 12, restore = 100 },  -- Minor Healthstone
+    [19004] = { tier = 13, restore = 110 },  -- Minor Healthstone (1/2)
+    [19005] = { tier = 14, restore = 120 },  -- Minor Healthstone (2/2)
+    [5511]  = { tier = 22, restore = 250 },  -- Lesser Healthstone
+    [19006] = { tier = 23, restore = 275 },  -- Lesser Healthstone (1/2)
+    [19007] = { tier = 24, restore = 300 },  -- Lesser Healthstone (2/2)
+    [5509]  = { tier = 32, restore = 500 },  -- Healthstone
+    [19008] = { tier = 33, restore = 550 },  -- Healthstone (1/2)
+    [19009] = { tier = 34, restore = 600 },  -- Healthstone (2/2)
+    [5510]  = { tier = 42, restore = 800 },  -- Greater Healthstone
+    [19010] = { tier = 43, restore = 880 },  -- Greater Healthstone (1/2)
+    [19011] = { tier = 44, restore = 960 },  -- Greater Healthstone (2/2)
+    [9421]  = { tier = 52, restore = 1200 }, -- Major Healthstone
+    [19012] = { tier = 53, restore = 1320 }, -- Major Healthstone (1/2)
+    [19013] = { tier = 54, restore = 1440 }, -- Major Healthstone (2/2)
+    [22103] = { tier = 66, restore = 2080 }, -- Master Healthstone
+    [22104] = { tier = 67, restore = 2288 }, -- Master Healthstone (1/2)
+    [22105] = { tier = 68, restore = 2496 }, -- Master Healthstone (2/2)
+    [36889] = { tier = 75, restore = 3500 }, -- Demonic Healthstone
+    [36892] = { tier = 80, restore = 4280 }, -- Fel Healthstone
+    [36893] = { tier = 81, restore = 4708 }, -- Fel Healthstone (1/2)
+    [36894] = { tier = 82, restore = 5136 }, -- Fel Healthstone (2/2)
+}
+
+local KNOWN_MANA_POTIONS = {
+    [2455]  = { tier = 10, restore = 160 },  -- Minor Mana Potion
+    [3385]  = { tier = 20, restore = 320 },  -- Lesser Mana Potion
+    [3827]  = { tier = 30, restore = 525 },  -- Mana Potion
+    [6149]  = { tier = 40, restore = 800 },  -- Greater Mana Potion
+    [13443] = { tier = 50, restore = 1050 }, -- Superior Mana Potion
+    [18841] = { tier = 55, restore = 1050 }, -- Combat Mana Potion
+    [17351] = { tier = 58, restore = 1375 }, -- Major Mana Draught
+    [13444] = { tier = 60, restore = 1800 }, -- Major Mana Potion
+    [18253] = { tier = 62, restore = 1600 }, -- Major Rejuvenation Potion (HP + Mana)
+    [22832] = { tier = 70, restore = 2400 }, -- Super Mana Potion
+    [33448] = { tier = 80, restore = 4300 }, -- Runic Mana Potion
+}
+
+-- ---------------------------------------------------------------------------
 -- Curated database of WoW Vanilla / Forever long-duration (5+ min) bonus items
--- (Flasks, Elixirs, Scrolls). Custom Forever items are also detected dynamically
--- via tooltip inspection below!
+-- (Flasks, Elixirs, Scrolls) with explicit tier ranking. Custom Forever items
+-- are also detected dynamically via tooltip inspection below!
 -- ---------------------------------------------------------------------------
 local LONG_BUFF_ITEMS = {
     -- Flasks (2h)
-    [13510] = { category = "flask", group = "elixir", duration = 7200, buffs = { 17628 } }, -- Flask of the Titans
-    [13511] = { category = "flask", group = "elixir", duration = 7200, buffs = { 17627 } }, -- Flask of Distilled Wisdom
-    [13512] = { category = "flask", group = "elixir", duration = 7200, buffs = { 17626 } }, -- Flask of Supreme Power
-    [13513] = { category = "flask", group = "elixir", duration = 7200, buffs = { 17629 } }, -- Flask of Chromatic Resistance
+    [13510] = { category = "flask", group = "elixir", tier = 90, duration = 7200, buffs = { 17628 } }, -- Flask of the Titans
+    [13511] = { category = "flask", group = "elixir", tier = 90, duration = 7200, buffs = { 17627 } }, -- Flask of Distilled Wisdom
+    [13512] = { category = "flask", group = "elixir", tier = 90, duration = 7200, buffs = { 17626 } }, -- Flask of Supreme Power
+    [13513] = { category = "flask", group = "elixir", tier = 85, duration = 7200, buffs = { 17629 } }, -- Flask of Chromatic Resistance
 
     -- Guardian Elixirs: Armor / Defense (60 min)
-    [5997]  = { category = "armor_elixir", group = "elixir", duration = 3600, buffs = { 673, 3166, 3220, 11348, 17534 } }, -- Elixir of Minor Defense
-    [3389]  = { category = "armor_elixir", group = "elixir", duration = 3600, buffs = { 673, 3166, 3220, 11348, 17534 } }, -- Elixir of Defense
-    [8951]  = { category = "armor_elixir", group = "elixir", duration = 3600, buffs = { 673, 3166, 3220, 11348, 17534 } }, -- Elixir of Greater Defense
-    [13445] = { category = "armor_elixir", group = "elixir", duration = 3600, buffs = { 673, 3166, 3220, 11348, 17534 } }, -- Elixir of Superior Defense
+    [5997]  = { category = "armor_elixir", group = "elixir", tier = 10, duration = 3600, buffs = { 673, 3166, 3220, 11348, 17534 } }, -- Elixir of Minor Defense
+    [3389]  = { category = "armor_elixir", group = "elixir", tier = 25, duration = 3600, buffs = { 673, 3166, 3220, 11348, 17534 } }, -- Elixir of Defense
+    [8951]  = { category = "armor_elixir", group = "elixir", tier = 40, duration = 3600, buffs = { 673, 3166, 3220, 11348, 17534 } }, -- Elixir of Greater Defense
+    [13445] = { category = "armor_elixir", group = "elixir", tier = 60, duration = 3600, buffs = { 673, 3166, 3220, 11348, 17534 } }, -- Elixir of Superior Defense
 
     -- Guardian Elixirs: Health / Fortitude / HP5 / MP5
-    [2458]  = { category = "health_elixir", group = "elixir", duration = 3600, buffs = { 2378, 3593 } }, -- Elixir of Minor Fortitude
-    [3825]  = { category = "health_elixir", group = "elixir", duration = 3600, buffs = { 2378, 3593 } }, -- Elixir of Fortitude
-    [3382]  = { category = "troll_blood",   group = "elixir", duration = 3600, buffs = { 3219, 3222, 3223, 24361 } }, -- Weak Troll's Blood
-    [3388]  = { category = "troll_blood",   group = "elixir", duration = 3600, buffs = { 3219, 3222, 3223, 24361 } }, -- Strong Troll's Blood
-    [3826]  = { category = "troll_blood",   group = "elixir", duration = 3600, buffs = { 3219, 3222, 3223, 24361 } }, -- Mighty Troll's Blood
-    [20004] = { category = "troll_blood",   group = "elixir", duration = 3600, buffs = { 3219, 3222, 3223, 24361 } }, -- Major Troll's Blood
-    [20007] = { category = "mp5_elixir",    group = "elixir", duration = 3600, buffs = { 24363 } }, -- Mageblood Potion/Elixir
-    [9088]  = { category = "gift_arthas",   group = "elixir", duration = 1800, buffs = { 11371 } }, -- Gift of Arthas
+    [2458]  = { category = "health_elixir", group = "elixir", tier = 15, duration = 3600, buffs = { 2378, 3593 } }, -- Elixir of Minor Fortitude
+    [3825]  = { category = "health_elixir", group = "elixir", tier = 40, duration = 3600, buffs = { 2378, 3593 } }, -- Elixir of Fortitude
+    [3382]  = { category = "troll_blood",   group = "elixir", tier = 10, duration = 3600, buffs = { 3219, 3222, 3223, 24361 } }, -- Weak Troll's Blood
+    [3388]  = { category = "troll_blood",   group = "elixir", tier = 25, duration = 3600, buffs = { 3219, 3222, 3223, 24361 } }, -- Strong Troll's Blood
+    [3826]  = { category = "troll_blood",   group = "elixir", tier = 40, duration = 3600, buffs = { 3219, 3222, 3223, 24361 } }, -- Mighty Troll's Blood
+    [20004] = { category = "troll_blood",   group = "elixir", tier = 60, duration = 3600, buffs = { 3219, 3222, 3223, 24361 } }, -- Major Troll's Blood
+    [20007] = { category = "mp5_elixir",    group = "elixir", tier = 60, duration = 3600, buffs = { 24363 } }, -- Mageblood Potion/Elixir
+    [9088]  = { category = "gift_arthas",   group = "elixir", tier = 50, duration = 1800, buffs = { 11371 } }, -- Gift of Arthas
 
     -- Battle Elixirs: Agility / Strength / Stats / Spell Power
-    [2457]  = { category = "agility_elixir", group = "elixir", duration = 3600, buffs = { 2374, 3160, 11328, 11334, 17538 } }, -- Minor Agility
-    [3390]  = { category = "agility_elixir", group = "elixir", duration = 3600, buffs = { 2374, 3160, 11328, 11334, 17538 } }, -- Lesser Agility
-    [8949]  = { category = "agility_elixir", group = "elixir", duration = 3600, buffs = { 2374, 3160, 11328, 11334, 17538 } }, -- Agility
-    [9187]  = { category = "agility_elixir", group = "elixir", duration = 3600, buffs = { 2374, 3160, 11328, 11334, 17538 } }, -- Greater Agility
-    [13452] = { category = "agility_elixir", group = "elixir", duration = 3600, buffs = { 2374, 3160, 11328, 11334, 17538 } }, -- Elixir of the Mongoose
+    [2457]  = { category = "agility_elixir", group = "elixir", tier = 10, duration = 3600, buffs = { 2374, 3160, 11328, 11334, 17538 } }, -- Minor Agility
+    [3390]  = { category = "agility_elixir", group = "elixir", tier = 20, duration = 3600, buffs = { 2374, 3160, 11328, 11334, 17538 } }, -- Lesser Agility
+    [8949]  = { category = "agility_elixir", group = "elixir", tier = 35, duration = 3600, buffs = { 2374, 3160, 11328, 11334, 17538 } }, -- Agility
+    [9187]  = { category = "agility_elixir", group = "elixir", tier = 50, duration = 3600, buffs = { 2374, 3160, 11328, 11334, 17538 } }, -- Greater Agility
+    [13452] = { category = "agility_elixir", group = "elixir", tier = 65, duration = 3600, buffs = { 2374, 3160, 11328, 11334, 17538 } }, -- Elixir of the Mongoose
 
-    [2454]  = { category = "strength_elixir", group = "elixir", duration = 3600, buffs = { 2367, 3164, 11405, 17537 } }, -- Lion's Strength
-    [3391]  = { category = "strength_elixir", group = "elixir", duration = 3600, buffs = { 2367, 3164, 11405, 17537 } }, -- Ogre's Strength
-    [9206]  = { category = "strength_elixir", group = "elixir", duration = 3600, buffs = { 2367, 3164, 11405, 17537 } }, -- Elixir of Giants
-    [13444] = { category = "strength_elixir", group = "elixir", duration = 3600, buffs = { 2367, 3164, 11405, 17537 } }, -- Elixir of Brute Force
+    [2454]  = { category = "strength_elixir", group = "elixir", tier = 10, duration = 3600, buffs = { 2367, 3164, 11405, 17537 } }, -- Lion's Strength
+    [3391]  = { category = "strength_elixir", group = "elixir", tier = 25, duration = 3600, buffs = { 2367, 3164, 11405, 17537 } }, -- Ogre's Strength
+    [9206]  = { category = "strength_elixir", group = "elixir", tier = 55, duration = 3600, buffs = { 2367, 3164, 11405, 17537 } }, -- Elixir of Giants
+    [13453] = { category = "strength_elixir", group = "elixir", tier = 50, duration = 3600, buffs = { 2367, 3164, 11405, 17537 } }, -- Elixir of Brute Force
 
-    [3383]  = { category = "intellect_elixir", group = "elixir", duration = 3600, buffs = { 3166, 11396, 17535 } }, -- Elixir of Wisdom
-    [9179]  = { category = "intellect_elixir", group = "elixir", duration = 3600, buffs = { 11396, 17535 } }, -- Elixir of Greater Intellect
-    [13447] = { category = "intellect_elixir", group = "elixir", duration = 3600, buffs = { 11396, 17535 } }, -- Elixir of the Sages
+    [3383]  = { category = "intellect_elixir", group = "elixir", tier = 20, duration = 3600, buffs = { 3166, 11396, 17535 } }, -- Elixir of Wisdom
+    [9179]  = { category = "intellect_elixir", group = "elixir", tier = 45, duration = 3600, buffs = { 11396, 17535 } }, -- Elixir of Greater Intellect
+    [13447] = { category = "intellect_elixir", group = "elixir", tier = 60, duration = 3600, buffs = { 11396, 17535 } }, -- Elixir of the Sages
 
-    [9155]  = { category = "spell_power_elixir", group = "elixir", duration = 1800, buffs = { 11390, 17539 } }, -- Arcane Elixir
-    [13454] = { category = "spell_power_elixir", group = "elixir", duration = 3600, buffs = { 11390, 17539 } }, -- Greater Arcane Elixir
-    [6373]  = { category = "fire_power_elixir",  group = "elixir", duration = 1800, buffs = { 7844, 26276 } }, -- Elixir of Firepower
-    [21546] = { category = "fire_power_elixir",  group = "elixir", duration = 1800, buffs = { 7844, 26276 } }, -- Elixir of Greater Firepower
-    [9264]  = { category = "shadow_power_elixir", group = "elixir", duration = 1800, buffs = { 11474 } }, -- Elixir of Shadow Power
-    [17708] = { category = "frost_power_elixir", group = "elixir", duration = 1800, buffs = { 21920 } }, -- Elixir of Frost Power
+    [9155]  = { category = "spell_power_elixir", group = "elixir", tier = 45, duration = 1800, buffs = { 11390, 17539 } }, -- Arcane Elixir
+    [13454] = { category = "spell_power_elixir", group = "elixir", tier = 60, duration = 3600, buffs = { 11390, 17539 } }, -- Greater Arcane Elixir
+    [6373]  = { category = "fire_power_elixir",  group = "elixir", tier = 35, duration = 1800, buffs = { 7844, 26276 } }, -- Elixir of Firepower
+    [21546] = { category = "fire_power_elixir",  group = "elixir", tier = 60, duration = 1800, buffs = { 7844, 26276 } }, -- Elixir of Greater Firepower
+    [9264]  = { category = "shadow_power_elixir", group = "elixir", tier = 55, duration = 1800, buffs = { 11474 } }, -- Elixir of Shadow Power
+    [17708] = { category = "frost_power_elixir", group = "elixir", tier = 55, duration = 1800, buffs = { 21920 } }, -- Elixir of Frost Power
 
     -- Scrolls (30 min, Ranks I-V)
-    [3013]  = { category = "scroll_armor", group = "scroll", duration = 1800, buffs = { 8091, 8094, 8095, 12175, 33079 } },
-    [1478]  = { category = "scroll_armor", group = "scroll", duration = 1800, buffs = { 8091, 8094, 8095, 12175, 33079 } },
-    [4421]  = { category = "scroll_armor", group = "scroll", duration = 1800, buffs = { 8091, 8094, 8095, 12175, 33079 } },
-    [10305] = { category = "scroll_armor", group = "scroll", duration = 1800, buffs = { 8091, 8094, 8095, 12175, 33079 } },
-    [27500] = { category = "scroll_armor", group = "scroll", duration = 1800, buffs = { 8091, 8094, 8095, 12175, 33079 } },
+    [3013]  = { category = "scroll_armor", group = "scroll", tier = 10, duration = 1800, buffs = { 8091, 8094, 8095, 12175, 33079 } },
+    [1478]  = { category = "scroll_armor", group = "scroll", tier = 20, duration = 1800, buffs = { 8091, 8094, 8095, 12175, 33079 } },
+    [4421]  = { category = "scroll_armor", group = "scroll", tier = 35, duration = 1800, buffs = { 8091, 8094, 8095, 12175, 33079 } },
+    [10305] = { category = "scroll_armor", group = "scroll", tier = 50, duration = 1800, buffs = { 8091, 8094, 8095, 12175, 33079 } },
+    [27500] = { category = "scroll_armor", group = "scroll", tier = 65, duration = 1800, buffs = { 8091, 8094, 8095, 12175, 33079 } },
 
-    [1180]  = { category = "scroll_stamina", group = "scroll", duration = 1800, buffs = { 8099, 8100, 8101, 12178, 33081 } },
-    [1711]  = { category = "scroll_stamina", group = "scroll", duration = 1800, buffs = { 8099, 8100, 8101, 12178, 33081 } },
-    [4422]  = { category = "scroll_stamina", group = "scroll", duration = 1800, buffs = { 8099, 8100, 8101, 12178, 33081 } },
-    [10307] = { category = "scroll_stamina", group = "scroll", duration = 1800, buffs = { 8099, 8100, 8101, 12178, 33081 } },
-    [27502] = { category = "scroll_stamina", group = "scroll", duration = 1800, buffs = { 8099, 8100, 8101, 12178, 33081 } },
+    [1180]  = { category = "scroll_stamina", group = "scroll", tier = 10, duration = 1800, buffs = { 8099, 8100, 8101, 12178, 33081 } },
+    [1711]  = { category = "scroll_stamina", group = "scroll", tier = 20, duration = 1800, buffs = { 8099, 8100, 8101, 12178, 33081 } },
+    [4422]  = { category = "scroll_stamina", group = "scroll", tier = 35, duration = 1800, buffs = { 8099, 8100, 8101, 12178, 33081 } },
+    [10307] = { category = "scroll_stamina", group = "scroll", tier = 50, duration = 1800, buffs = { 8099, 8100, 8101, 12178, 33081 } },
+    [27502] = { category = "scroll_stamina", group = "scroll", tier = 65, duration = 1800, buffs = { 8099, 8100, 8101, 12178, 33081 } },
 
-    [954]   = { category = "scroll_strength", group = "scroll", duration = 1800, buffs = { 8118, 8119, 8120, 12179, 33082 } },
-    [2289]  = { category = "scroll_strength", group = "scroll", duration = 1800, buffs = { 8118, 8119, 8120, 12179, 33082 } },
-    [4426]  = { category = "scroll_strength", group = "scroll", duration = 1800, buffs = { 8118, 8119, 8120, 12179, 33082 } },
-    [10310] = { category = "scroll_strength", group = "scroll", duration = 1800, buffs = { 8118, 8119, 8120, 12179, 33082 } },
-    [27503] = { category = "scroll_strength", group = "scroll", duration = 1800, buffs = { 8118, 8119, 8120, 12179, 33082 } },
+    [954]   = { category = "scroll_strength", group = "scroll", tier = 10, duration = 1800, buffs = { 8118, 8119, 8120, 12179, 33082 } },
+    [2289]  = { category = "scroll_strength", group = "scroll", tier = 20, duration = 1800, buffs = { 8118, 8119, 8120, 12179, 33082 } },
+    [4426]  = { category = "scroll_strength", group = "scroll", tier = 35, duration = 1800, buffs = { 8118, 8119, 8120, 12179, 33082 } },
+    [10310] = { category = "scroll_strength", group = "scroll", tier = 50, duration = 1800, buffs = { 8118, 8119, 8120, 12179, 33082 } },
+    [27503] = { category = "scroll_strength", group = "scroll", tier = 65, duration = 1800, buffs = { 8118, 8119, 8120, 12179, 33082 } },
 
-    [3012]  = { category = "scroll_agility", group = "scroll", duration = 1800, buffs = { 8115, 8116, 8117, 12174, 33077 } },
-    [1477]  = { category = "scroll_agility", group = "scroll", duration = 1800, buffs = { 8115, 8116, 8117, 12174, 33077 } },
-    [4425]  = { category = "scroll_agility", group = "scroll", duration = 1800, buffs = { 8115, 8116, 8117, 12174, 33077 } },
-    [10309] = { category = "scroll_agility", group = "scroll", duration = 1800, buffs = { 8115, 8116, 8117, 12174, 33077 } },
-    [27498] = { category = "scroll_agility", group = "scroll", duration = 1800, buffs = { 8115, 8116, 8117, 12174, 33077 } },
+    [3012]  = { category = "scroll_agility", group = "scroll", tier = 10, duration = 1800, buffs = { 8115, 8116, 8117, 12174, 33077 } },
+    [1477]  = { category = "scroll_agility", group = "scroll", tier = 20, duration = 1800, buffs = { 8115, 8116, 8117, 12174, 33077 } },
+    [4425]  = { category = "scroll_agility", group = "scroll", tier = 35, duration = 1800, buffs = { 8115, 8116, 8117, 12174, 33077 } },
+    [10309] = { category = "scroll_agility", group = "scroll", tier = 50, duration = 1800, buffs = { 8115, 8116, 8117, 12174, 33077 } },
+    [27498] = { category = "scroll_agility", group = "scroll", tier = 65, duration = 1800, buffs = { 8115, 8116, 8117, 12174, 33077 } },
 
-    [955]   = { category = "scroll_intellect", group = "scroll", duration = 1800, buffs = { 8096, 8097, 8098, 12176, 33078 } },
-    [2290]  = { category = "scroll_intellect", group = "scroll", duration = 1800, buffs = { 8096, 8097, 8098, 12176, 33078 } },
-    [4427]  = { category = "scroll_intellect", group = "scroll", duration = 1800, buffs = { 8096, 8097, 8098, 12176, 33078 } },
-    [10308] = { category = "scroll_intellect", group = "scroll", duration = 1800, buffs = { 8096, 8097, 8098, 12176, 33078 } },
-    [27499] = { category = "scroll_intellect", group = "scroll", duration = 1800, buffs = { 8096, 8097, 8098, 12176, 33078 } },
+    [955]   = { category = "scroll_intellect", group = "scroll", tier = 10, duration = 1800, buffs = { 8096, 8097, 8098, 12176, 33078 } },
+    [2290]  = { category = "scroll_intellect", group = "scroll", tier = 20, duration = 1800, buffs = { 8096, 8097, 8098, 12176, 33078 } },
+    [4427]  = { category = "scroll_intellect", group = "scroll", tier = 35, duration = 1800, buffs = { 8096, 8097, 8098, 12176, 33078 } },
+    [10308] = { category = "scroll_intellect", group = "scroll", tier = 50, duration = 1800, buffs = { 8096, 8097, 8098, 12176, 33078 } },
+    [27499] = { category = "scroll_intellect", group = "scroll", tier = 65, duration = 1800, buffs = { 8096, 8097, 8098, 12176, 33078 } },
 
-    [1181]  = { category = "scroll_spirit", group = "scroll", duration = 1800, buffs = { 8112, 8113, 8114, 12177, 33080 } },
-    [1712]  = { category = "scroll_spirit", group = "scroll", duration = 1800, buffs = { 8112, 8113, 8114, 12177, 33080 } },
-    [4424]  = { category = "scroll_spirit", group = "scroll", duration = 1800, buffs = { 8112, 8113, 8114, 12177, 33080 } },
-    [10306] = { category = "scroll_spirit", group = "scroll", duration = 1800, buffs = { 8112, 8113, 8114, 12177, 33080 } },
-    [27501] = { category = "scroll_spirit", group = "scroll", duration = 1800, buffs = { 8112, 8113, 8114, 12177, 33080 } },
+    [1181]  = { category = "scroll_spirit", group = "scroll", tier = 10, duration = 1800, buffs = { 8112, 8113, 8114, 12177, 33080 } },
+    [1712]  = { category = "scroll_spirit", group = "scroll", tier = 20, duration = 1800, buffs = { 8112, 8113, 8114, 12177, 33080 } },
+    [4424]  = { category = "scroll_spirit", group = "scroll", tier = 35, duration = 1800, buffs = { 8112, 8113, 8114, 12177, 33080 } },
+    [10306] = { category = "scroll_spirit", group = "scroll", tier = 50, duration = 1800, buffs = { 8112, 8113, 8114, 12177, 33080 } },
+    [27501] = { category = "scroll_spirit", group = "scroll", tier = 65, duration = 1800, buffs = { 8112, 8113, 8114, 12177, 33080 } },
 }
 
 -- Situational long-duration potions excluded from generic auto-buff (best used via custom rules [+])
@@ -466,8 +699,9 @@ local function parseRestoreAmount(lowerText, keywordPatterns)
     if not lowerText or lowerText == "" then return 0 end
     local best = 0
     for _, pat in ipairs(keywordPatterns) do
-        for num in lowerText:gmatch(pat) do
-            local cleaned = num:gsub("[%.,]", "")
+        for a, b in lowerText:gmatch(pat) do
+            local raw = b or a
+            local cleaned = raw and raw:gsub("[%.,]", "") or ""
             local val = tonumber(cleaned) or 0
             if val > best then best = val end
         end
@@ -475,44 +709,44 @@ local function parseRestoreAmount(lowerText, keywordPatterns)
     return best
 end
 
-local function inferDynamicLongBuffCategory(lowerText, nameLower, subClassID, spellID)
+local function inferDynamicLongBuffCategory(foldedText, foldedName, subClassID, spellID)
     -- Skip situational buffs (underwater breath, swim speed, invisibility, protection vs school)
-    if lowerText:find("breathe underwater", 1, true) or lowerText:find("respirar debaixo", 1, true)
-        or lowerText:find("swim speed", 1, true) or lowerText:find("velocidade de nado", 1, true)
-        or lowerText:find("invisib", 1, true) or lowerText:find("slow fall", 1, true)
-        or lowerText:find("queda lenta", 1, true) or lowerText:find("detect ", 1, true)
-        or lowerText:find("detectar ", 1, true) then
+    if foldedText:find("breathe underwater", 1, true) or foldedText:find("respirar debaixo", 1, true)
+        or foldedText:find("swim speed", 1, true) or foldedText:find("velocidade de nado", 1, true)
+        or foldedText:find("invisib", 1, true) or foldedText:find("slow fall", 1, true)
+        or foldedText:find("queda lenta", 1, true) or foldedText:find("detect ", 1, true)
+        or foldedText:find("detectar ", 1, true) then
         return nil, nil
     end
     local isScroll = (subClassID == 3 or subClassID == 4)
-        and (nameLower:find("scroll", 1, true) or nameLower:find("pergaminho", 1, true))
+        and (foldedName:find("scroll", 1, true) or foldedName:find("pergaminho", 1, true))
     local group = isScroll and "scroll" or "elixir"
     local prefix = isScroll and "scroll_" or "elixir_"
 
-    if lowerText:find("armor", 1, true) or lowerText:find("armadura", 1, true) then
+    if foldedText:find("armor", 1, true) or foldedText:find("armadura", 1, true) then
         return prefix .. "armor", group
-    elseif lowerText:find("agility", 1, true) or lowerText:find("agilidade", 1, true) then
+    elseif foldedText:find("agility", 1, true) or foldedText:find("agilidade", 1, true) then
         return prefix .. "agility", group
-    elseif lowerText:find("strength", 1, true) or lowerText:find("força", 1, true) or lowerText:find("forca", 1, true) then
+    elseif foldedText:find("strength", 1, true) or foldedText:find("forca", 1, true) then
         return prefix .. "strength", group
-    elseif lowerText:find("intellect", 1, true) or lowerText:find("intelecto", 1, true) then
+    elseif foldedText:find("intellect", 1, true) or foldedText:find("intelecto", 1, true) then
         return prefix .. "intellect", group
-    elseif lowerText:find("stamina", 1, true) or lowerText:find("vigor", 1, true) then
+    elseif foldedText:find("stamina", 1, true) or foldedText:find("vigor", 1, true) then
         return prefix .. "stamina", group
-    elseif lowerText:find("spirit", 1, true) or lowerText:find("espírito", 1, true) or lowerText:find("espirito", 1, true) then
+    elseif foldedText:find("spirit", 1, true) or foldedText:find("espirito", 1, true) then
         return prefix .. "spirit", group
-    elseif lowerText:find("spell damage", 1, true) or lowerText:find("poder mágico", 1, true)
-        or lowerText:find("poder magico", 1, true) or lowerText:find("dano mágico", 1, true)
-        or lowerText:find("dano de feitiço", 1, true) then
+    elseif foldedText:find("spell damage", 1, true) or foldedText:find("poder magico", 1, true)
+        or foldedText:find("dano magico", 1, true) or foldedText:find("dano de feitico", 1, true)
+        or foldedText:find("spell power", 1, true) then
         return "spell_power_elixir", group
-    elseif lowerText:find("mana per", 1, true) or lowerText:find("mana a cada", 1, true) then
+    elseif foldedText:find("mana per", 1, true) or foldedText:find("mana a cada", 1, true) then
         return "mp5_elixir", group
-    elseif lowerText:find("maximum health", 1, true) or lowerText:find("vida máxima", 1, true)
-        or lowerText:find("vida maxima", 1, true) or lowerText:find("saúde máxima", 1, true) then
+    elseif foldedText:find("maximum health", 1, true) or foldedText:find("vida maxima", 1, true)
+        or foldedText:find("saude maxima", 1, true) then
         return "health_elixir", group
-    elseif lowerText:find("attack power", 1, true) or lowerText:find("poder de ataque", 1, true) then
+    elseif foldedText:find("attack power", 1, true) or foldedText:find("poder de ataque", 1, true) then
         return "attack_power_elixir", group
-    elseif lowerText:find("critical", 1, true) or lowerText:find("crítico", 1, true) or lowerText:find("critico", 1, true) then
+    elseif foldedText:find("critical", 1, true) or foldedText:find("critico", 1, true) then
         return "crit_elixir", group
     elseif spellID then
         return prefix .. "spell_" .. tostring(spellID), group
@@ -538,8 +772,10 @@ local function inspectItem(itemID, bag, slot)
     spellID = okSp and safeNum(spellID, nil) or nil
 
     local tipText = readTooltipText(itemID, bag, slot)
-    local lowerText = tipText:lower()
-    local nameLower = name:lower()
+    local foldedText = foldPT(tipText)
+    local foldedName = foldPT(name)
+    local foldedSub = foldPT(safeStr(itemSubType) or "")
+    local foldedSpell = spellName and normalizeText(spellName) or ""
 
     local meta = {
         itemID = itemID,
@@ -557,111 +793,233 @@ local function inspectItem(itemID, bag, slot)
         subClassID = safeNum(subClassID, -1) or -1,
         spellName = spellName,
         spellID = spellID,
-        usable = (spellID ~= nil or spellName ~= nil or lowerText:find("use:", 1, true) ~= nil
-            or lowerText:find("uso:", 1, true) ~= nil),
+        tipLen = #tipText,
+        usable = (spellID ~= nil or spellName ~= nil or foldedText:find("use:", 1, true) ~= nil
+            or foldedText:find("uso:", 1, true) ~= nil),
         isFood = false,
         isDrink = false,
+        foodTier = 0,
+        drinkTier = 0,
         foodRestore = 0,
         drinkRestore = 0,
+        isHealPot = false,
+        isManaPot = false,
+        healPotTier = 0,
+        manaPotTier = 0,
+        healPotRestore = 0,
+        manaPotRestore = 0,
         longBuff = nil,
+        longBuffTier = 0,
         loaded = true,
     }
 
-    -- Classify Food / Drink (Consumable class 0, excluding Potions/Bandages/Elixirs)
-    local isConsumable = (meta.classID == 0)
-    local subLower = meta.itemSubType:lower()
-    local isFoodDrinkSub = isConsumable and (
-        meta.subClassID == 4 or meta.subClassID == 5
-        or subLower:find("food", 1, true) ~= nil
-        or subLower:find("drink", 1, true) ~= nil
-        or subLower:find("comida", 1, true) ~= nil
-        or subLower:find("bebida", 1, true) ~= nil
-    )
-    local seatedHint = lowerText:find("seated", 1, true) ~= nil
-        or lowerText:find("sentado", 1, true) ~= nil
-        or lowerText:find("permanecer sentado", 1, true) ~= nil
-        or (spellID ~= nil and (FOOD_AURA_IDS[spellID] or DRINK_AURA_IDS[spellID] or HYBRID_FOOD_DRINK_IDS[spellID]))
-        or (spellName ~= nil and (nameLooksLikeFood(normalizeText(spellName)) or nameLooksLikeDrink(normalizeText(spellName))))
+    local curatedMatch = false
 
-    if isConsumable and (isFoodDrinkSub or seatedHint) and meta.subClassID ~= 1 and meta.subClassID ~= 2 then
-        local mentionsHealth = lowerText:find("health", 1, true) ~= nil
-            or lowerText:find("vida", 1, true) ~= nil
-            or lowerText:find("saúde", 1, true) ~= nil
-            or lowerText:find("saude", 1, true) ~= nil
-        local mentionsMana = lowerText:find("mana", 1, true) ~= nil
+    -- 1) Curated catalogs FIRST (work even before tooltip loads or when sellPrice == 0)
+    local kf = KNOWN_FOODS[itemID]
+    if kf then
+        curatedMatch = true
+        meta.isFood = true
+        meta.foodTier = kf.tier or 0
+        meta.foodRestore = kf.restore or 0
+        meta.usable = true
+        if spellID then knownFoodSpellIDs[spellID] = true end
+    end
+    local kd = KNOWN_DRINKS[itemID]
+    if kd then
+        curatedMatch = true
+        meta.isDrink = true
+        meta.drinkTier = kd.tier or 0
+        meta.drinkRestore = kd.restore or 0
+        meta.usable = true
+        if spellID then knownDrinkSpellIDs[spellID] = true end
+    end
+    local khp = KNOWN_HEAL_POTIONS[itemID]
+    if khp then
+        curatedMatch = true
+        meta.isHealPot = true
+        meta.healPotTier = khp.tier or 0
+        meta.healPotRestore = khp.restore or 0
+        meta.usable = true
+    end
+    local kmp = KNOWN_MANA_POTIONS[itemID]
+    if kmp then
+        curatedMatch = true
+        meta.isManaPot = true
+        meta.manaPotTier = kmp.tier or 0
+        meta.manaPotRestore = kmp.restore or 0
+        meta.usable = true
+    end
+
+    -- 2) Dynamic Food / Drink detection (custom WoW Forever items + tooltip restore refinement)
+    local isConsumable = (meta.classID == 0)
+    local isFoodDrinkSub = isConsumable and (
+        meta.subClassID == 5
+        or foldedSub:find("food", 1, true) ~= nil
+        or foldedSub:find("drink", 1, true) ~= nil
+        or foldedSub:find("comida", 1, true) ~= nil
+        or foldedSub:find("bebida", 1, true) ~= nil
+    )
+    local seatedHint = foldedText:find("seated", 1, true) ~= nil
+        or foldedText:find("sentad", 1, true) ~= nil
+        or foldedText:find("enquanto come", 1, true) ~= nil
+        or foldedText:find("enquanto bebe", 1, true) ~= nil
+        or foldedText:find("while eating", 1, true) ~= nil
+        or foldedText:find("while drinking", 1, true) ~= nil
+        or (isFoodDrinkSub and (foldedText:find("durante", 1, true) ~= nil or foldedText:find("over ", 1, true) ~= nil))
+        or (spellID ~= nil and (FOOD_AURA_IDS[spellID] or DRINK_AURA_IDS[spellID] or HYBRID_FOOD_DRINK_IDS[spellID]))
+        or (foldedSpell ~= "" and (nameLooksLikeFood(foldedSpell) or nameLooksLikeDrink(foldedSpell)))
+
+    if isConsumable and (isFoodDrinkSub or seatedHint) and meta.subClassID ~= 1 and meta.subClassID ~= 2 and meta.subClassID ~= 3 then
+        local mentionsHealth = foldedText:find("health", 1, true) ~= nil
+            or foldedText:find("vida", 1, true) ~= nil
+            or foldedText:find("saude", 1, true) ~= nil
+        local mentionsMana = foldedText:find("mana", 1, true) ~= nil
 
         if (mentionsHealth and seatedHint)
             or (spellID and (FOOD_AURA_IDS[spellID] or HYBRID_FOOD_DRINK_IDS[spellID]))
-            or (spellName and nameLooksLikeFood(normalizeText(spellName))) then
+            or (foldedSpell ~= "" and nameLooksLikeFood(foldedSpell)) then
             meta.isFood = true
-            meta.foodRestore = parseRestoreAmount(lowerText, {
+            local parsed = parseRestoreAmount(foldedText, {
                 "restores?%s+([%d%.,]+)%s+health",
                 "restaura%s+([%d%.,]+)%s+p?o?n?t?o?s?%s*d?e?%s*vida",
                 "restaura%s+([%d%.,]+)%s+de%s+vida",
+                "restaura%s+([%d%.,]+)%s+de%s+saude",
                 "([%d%.,]+)%s+health",
                 "([%d%.,]+)%s+de%s+vida",
+                "([%d%.,]+)%s+de%s+saude",
             })
+            if parsed > meta.foodRestore then meta.foodRestore = parsed end
             if spellID then knownFoodSpellIDs[spellID] = true end
         end
 
         if (mentionsMana and seatedHint)
             or (spellID and (DRINK_AURA_IDS[spellID] or HYBRID_FOOD_DRINK_IDS[spellID]))
-            or (spellName and nameLooksLikeDrink(normalizeText(spellName))) then
+            or (foldedSpell ~= "" and nameLooksLikeDrink(foldedSpell)) then
             meta.isDrink = true
-            meta.drinkRestore = parseRestoreAmount(lowerText, {
+            local parsed = parseRestoreAmount(foldedText, {
                 "restores?%s+([%d%.,]+)%s+mana",
                 "restaura%s+([%d%.,]+)%s+p?o?n?t?o?s?%s*d?e?%s*mana",
                 "restaura%s+([%d%.,]+)%s+de%s+mana",
                 "([%d%.,]+)%s+mana",
                 "([%d%.,]+)%s+de%s+mana",
             })
+            if parsed > meta.drinkRestore then meta.drinkRestore = parsed end
             if spellID then knownDrinkSpellIDs[spellID] = true end
         end
     end
 
-    -- Classify Long-duration (5+ min) bonus potions, elixirs, flasks and scrolls
+    -- 3) Dynamic Combat Healing / Mana Potion detection (custom WoW Forever potions)
+    if isConsumable and not meta.isFood and not meta.isDrink and not EXCLUDED_AUTO_BUFF_ITEMS[itemID] then
+        local dur = parseDurationSeconds(foldedText)
+        local isBandage = foldedName:find("bandage", 1, true) ~= nil
+            or foldedName:find("bandagem", 1, true) ~= nil
+            or foldedName:find("atadura", 1, true) ~= nil
+            or foldedSub:find("bandage", 1, true) ~= nil
+            or foldedSub:find("bandagem", 1, true) ~= nil
+        local looksLikePotion = (meta.subClassID == 1)
+            or foldedSub:find("potion", 1, true) ~= nil
+            or foldedSub:find("pocao", 1, true) ~= nil
+            or foldedName:find("potion", 1, true) ~= nil
+            or foldedName:find("pocao", 1, true) ~= nil
+            or foldedName:find("draught", 1, true) ~= nil
+            or foldedName:find("healthstone", 1, true) ~= nil
+            or foldedName:find("pedra de vida", 1, true) ~= nil
+            or foldedName:find("pedra da vida", 1, true) ~= nil
+        local isOverTimeBuff = foldedText:find("per 5", 1, true) ~= nil
+            or foldedText:find("every 5", 1, true) ~= nil
+            or foldedText:find("a cada 5", 1, true) ~= nil
+            or foldedText:find("maximum health", 1, true) ~= nil
+            or foldedText:find("vida maxima", 1, true) ~= nil
+            or foldedText:find("saude maxima", 1, true) ~= nil
+        if looksLikePotion and not isBandage and not seatedHint and dur < 60 and not isOverTimeBuff then
+            local restoresWord = foldedText:find("restor", 1, true) ~= nil
+                or foldedText:find("restaur", 1, true) ~= nil
+                or foldedText:find("recuper", 1, true) ~= nil
+                or foldedText:find("heal", 1, true) ~= nil
+                or foldedText:find("cura", 1, true) ~= nil
+            local mentionsHP = foldedText:find("health", 1, true) ~= nil
+                or foldedText:find("vida", 1, true) ~= nil
+                or foldedText:find("saude", 1, true) ~= nil
+            local mentionsMP = foldedText:find("mana", 1, true) ~= nil
+            if restoresWord and mentionsHP then
+                meta.isHealPot = true
+                local parsed = parseRestoreAmount(foldedText, {
+                    "([%d%.,]+)%s+to%s+([%d%.,]+)%s+health",
+                    "([%d%.,]+)%s+a%s+([%d%.,]+)%s+p?o?n?t?o?s?%s*d?e?%s*vida",
+                    "([%d%.,]+)%s+health",
+                    "([%d%.,]+)%s+de%s+vida",
+                    "([%d%.,]+)%s+pontos%s+de%s+vida",
+                    "([%d%.,]+)%s+de%s+saude",
+                })
+                if parsed > meta.healPotRestore then meta.healPotRestore = parsed end
+            end
+            if restoresWord and mentionsMP then
+                meta.isManaPot = true
+                local parsed = parseRestoreAmount(foldedText, {
+                    "([%d%.,]+)%s+to%s+([%d%.,]+)%s+mana",
+                    "([%d%.,]+)%s+a%s+([%d%.,]+)%s+p?o?n?t?o?s?%s*d?e?%s*mana",
+                    "([%d%.,]+)%s+mana",
+                    "([%d%.,]+)%s+de%s+mana",
+                    "([%d%.,]+)%s+pontos%s+de%s+mana",
+                })
+                if parsed > meta.manaPotRestore then meta.manaPotRestore = parsed end
+            end
+        end
+    end
+
+    -- 4) Long-duration (5+ min) bonus potions, elixirs, flasks and scrolls
     if not EXCLUDED_AUTO_BUFF_ITEMS[itemID] then
         local curated = LONG_BUFF_ITEMS[itemID]
         if curated then
+            curatedMatch = true
             local buffs = {}
             for _, bid in ipairs(curated.buffs or {}) do buffs[#buffs + 1] = bid end
             if spellID then buffs[#buffs + 1] = spellID end
             meta.longBuff = {
                 category = curated.category,
                 group = curated.group,
+                tier = curated.tier or 0,
                 duration = curated.duration,
                 buffs = buffs,
                 buffName = spellName and normalizeText(spellName) or nil,
             }
-        elseif isConsumable and not meta.isFood and not meta.isDrink then
-            local dur = parseDurationSeconds(lowerText)
-            local looksLikeBuff = lowerText:find("increases", 1, true) ~= nil
-                or lowerText:find("aumenta", 1, true) ~= nil
-                or lowerText:find("regenerates", 1, true) ~= nil
-                or lowerText:find("regenera", 1, true) ~= nil
-                or lowerText:find("restores", 1, true) ~= nil
-                or lowerText:find("restaura", 1, true) ~= nil
-                or nameLower:find("elixir", 1, true) ~= nil
-                or nameLower:find("flask", 1, true) ~= nil
-                or nameLower:find("frasco", 1, true) ~= nil
-                or nameLower:find("scroll", 1, true) ~= nil
-                or nameLower:find("pergaminho", 1, true) ~= nil
+            meta.longBuffTier = curated.tier or 0
+            meta.usable = true
+        elseif isConsumable and not meta.isFood and not meta.isDrink and not meta.isHealPot and not meta.isManaPot then
+            local dur = parseDurationSeconds(foldedText)
+            local looksLikeBuff = foldedText:find("increases", 1, true) ~= nil
+                or foldedText:find("aumenta", 1, true) ~= nil
+                or foldedText:find("regenerates", 1, true) ~= nil
+                or foldedText:find("regenera", 1, true) ~= nil
+                or foldedText:find("restores", 1, true) ~= nil
+                or foldedText:find("restaura", 1, true) ~= nil
+                or foldedName:find("elixir", 1, true) ~= nil
+                or foldedName:find("flask", 1, true) ~= nil
+                or foldedName:find("frasco", 1, true) ~= nil
+                or foldedName:find("scroll", 1, true) ~= nil
+                or foldedName:find("pergaminho", 1, true) ~= nil
             if dur >= 300 and looksLikeBuff then
-                local cat, grp = inferDynamicLongBuffCategory(lowerText, nameLower, meta.subClassID, spellID)
+                local cat, grp = inferDynamicLongBuffCategory(foldedText, foldedName, meta.subClassID, spellID)
                 if cat then
                     meta.longBuff = {
                         category = cat,
                         group = grp,
+                        tier = 0,
                         duration = dur,
                         buffs = spellID and { spellID } or {},
                         buffName = spellName and normalizeText(spellName) or nil,
                     }
+                    meta.longBuffTier = 0
                 end
             end
         end
     end
 
-    itemMetaCache[itemID] = meta
+    -- Never permanently cache an unclassified item whose tooltip had not loaded yet!
+    if tipText ~= "" or curatedMatch then
+        itemMetaCache[itemID] = meta
+    end
     return meta
 end
 
@@ -782,6 +1140,10 @@ local function getConfig(create)
             foodThreshold = 50,
             drinkEnabled = false,
             drinkThreshold = 50,
+            healPotEnabled = false,
+            healPotThreshold = 40,
+            manaPotEnabled = false,
+            manaPotThreshold = 35,
             bonusEnabled = false,
             bonusElixirs = true,
             bonusScrolls = true,
@@ -792,6 +1154,8 @@ local function getConfig(create)
     end
     if cfg.foodThreshold == nil then cfg.foodThreshold = 50 end
     if cfg.drinkThreshold == nil then cfg.drinkThreshold = 50 end
+    if cfg.healPotThreshold == nil then cfg.healPotThreshold = 40 end
+    if cfg.manaPotThreshold == nil then cfg.manaPotThreshold = 35 end
     if cfg.bonusElixirs == nil then cfg.bonusElixirs = true end
     if cfg.bonusScrolls == nil then cfg.bonusScrolls = true end
     if type(cfg.customRules) ~= "table" then cfg.customRules = {} end
@@ -999,21 +1363,33 @@ end
 -- ---------------------------------------------------------------------------
 -- Candidate ranking & buff matching
 -- ---------------------------------------------------------------------------
-local function isBetterCandidate(a, b, restoreField)
+local function isBetterCandidate(a, b, tierField, restoreField)
     if not b then return true end
     local ma, mb = a.meta, b.meta
-    -- Highest value (sellPrice) first, as requested by the user
+    local ta = (tierField and ma[tierField]) or 0
+    local tb = (tierField and mb[tierField]) or 0
+    -- If both items are in our curated catalog, prefer the higher curated tier first
+    -- (so e.g. Conjured Crystal Water [0c, 4200 mana] beats Refreshing Spring Water [1c, 151 mana]).
+    if ta > 0 and tb > 0 and ta ~= tb then
+        return ta > tb
+    end
+    -- Next, prefer higher parsed/cataloged restore amount (works for custom Forever items too)
+    if restoreField then
+        local ra, rb = ma[restoreField] or 0, mb[restoreField] or 0
+        if ra ~= rb then return ra > rb end
+    end
+    -- Next, highest vendor value (sellPrice)
     if (ma.sellPrice or 0) ~= (mb.sellPrice or 0) then
         return (ma.sellPrice or 0) > (mb.sellPrice or 0)
     end
-    -- Tie-breaker (e.g. conjured mage food/water with sellPrice == 0): restore amount -> itemLevel -> minLevel
-    if restoreField and (ma[restoreField] or 0) ~= (mb[restoreField] or 0) then
-        return (ma[restoreField] or 0) > (mb[restoreField] or 0)
-    end
+    -- Tie-breakers: itemLevel -> minLevel -> curated tier
     if (ma.itemLevel or 0) ~= (mb.itemLevel or 0) then
         return (ma.itemLevel or 0) > (mb.itemLevel or 0)
     end
-    return (ma.minLevel or 0) > (mb.minLevel or 0)
+    if (ma.minLevel or 0) ~= (mb.minLevel or 0) then
+        return (ma.minLevel or 0) > (mb.minLevel or 0)
+    end
+    return ta > tb
 end
 
 local function isLongBuffActive(entry, aurasByID, aurasByName)
@@ -1085,7 +1461,7 @@ function Consumables.GetSuggestions()
             local bestFood
             for _, entry in pairs(owned) do
                 if entry.meta and entry.meta.isFood and itemIsEligibleToShow(entry, env.bagOpen) then
-                    if isBetterCandidate(entry, bestFood, "foodRestore") then
+                    if isBetterCandidate(entry, bestFood, "foodTier", "foodRestore") then
                         bestFood = entry
                     end
                 end
@@ -1098,7 +1474,7 @@ function Consumables.GetSuggestions()
             local bestDrink
             for _, entry in pairs(owned) do
                 if entry.meta and entry.meta.isDrink and itemIsEligibleToShow(entry, env.bagOpen) then
-                    if isBetterCandidate(entry, bestDrink, "drinkRestore") then
+                    if isBetterCandidate(entry, bestDrink, "drinkTier", "drinkRestore") then
                         bestDrink = entry
                     end
                 end
@@ -1107,7 +1483,41 @@ function Consumables.GetSuggestions()
         end
     end
 
-    -- 2) Long-duration (5+ min) bonus potions, elixirs, flasks and scrolls
+    -- While actively eating or drinking out of combat, do not suggest bonus potions or custom rules
+    -- that would interrupt resting (only the missing Food/Drink partner above may stay lit).
+    if not env.inCombat and (eating or drinking) then
+        return suggestions
+    end
+
+    -- 2) Combat Potions (Healing Potion / Healthstone & Mana Potion) — in combat, auto-picks best usable
+    if env.inCombat and not env.mounted then
+        if cfg.healPotEnabled and env.hpPct ~= nil and env.hpPct < (cfg.healPotThreshold or 40) then
+            local bestHealPot
+            for _, entry in pairs(owned) do
+                if entry.meta and entry.meta.isHealPot and itemIsEligibleToShow(entry, env.bagOpen) then
+                    if isBetterCandidate(entry, bestHealPot, "healPotTier", "healPotRestore") then
+                        bestHealPot = entry
+                    end
+                end
+            end
+            if bestHealPot then addSuggestion(bestHealPot.itemID, "Defensive", "heal_pot") end
+        end
+
+        if cfg.manaPotEnabled and env.hasMana
+            and env.manaPct ~= nil and env.manaPct < (cfg.manaPotThreshold or 35) then
+            local bestManaPot
+            for _, entry in pairs(owned) do
+                if entry.meta and entry.meta.isManaPot and itemIsEligibleToShow(entry, env.bagOpen) then
+                    if isBetterCandidate(entry, bestManaPot, "manaPotTier", "manaPotRestore") then
+                        bestManaPot = entry
+                    end
+                end
+            end
+            if bestManaPot then addSuggestion(bestManaPot.itemID, "Utility", "mana_pot") end
+        end
+    end
+
+    -- 3) Long-duration (5+ min) bonus potions, elixirs, flasks and scrolls
     if cfg.bonusEnabled and not env.mounted then
         local bestByCategory = {}
         for _, entry in pairs(owned) do
@@ -1117,7 +1527,7 @@ function Consumables.GetSuggestions()
                     or (lb.group ~= "scroll" and cfg.bonusElixirs ~= false)
                 if groupAllowed and not isLongBuffActive(entry, aurasByID, aurasByName) then
                     local curBest = bestByCategory[lb.category]
-                    if isBetterCandidate(entry, curBest, nil) then
+                    if isBetterCandidate(entry, curBest, "longBuffTier", nil) then
                         bestByCategory[lb.category] = entry
                     end
                 end
@@ -1128,7 +1538,7 @@ function Consumables.GetSuggestions()
         end
     end
 
-    -- 3) User-configured situational rules ([+] button)
+    -- 4) User-configured situational rules ([+] button)
     for _, rule in ipairs(cfg.customRules or {}) do
         local itemID = tonumber(rule.itemID)
         local entry = itemID and owned[itemID] or nil
@@ -1157,6 +1567,7 @@ end
 -- ---------------------------------------------------------------------------
 local tracker = CreateFrame("Frame", "CFA_ConsumablesTracker", UIParent)
 tracker:RegisterEvent("BAG_UPDATE_DELAYED")
+tracker:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
 tracker:RegisterEvent("PLAYER_ENTERING_WORLD")
 tracker:RegisterEvent("PLAYER_DEAD")
 tracker:RegisterEvent("PLAYER_REGEN_DISABLED")
@@ -1164,7 +1575,7 @@ tracker:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
 tracker:RegisterUnitEvent("UNIT_SPELLCAST_SENT", "player")
 
 tracker:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4)
-    if event == "BAG_UPDATE_DELAYED" then
+    if event == "BAG_UPDATE_DELAYED" or event == "ACTIONBAR_SLOT_CHANGED" then
         bagScanCache = nil
     elseif event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_DEAD" then
         bagScanCache = nil
@@ -1248,59 +1659,78 @@ function Consumables.DebugDump()
     local aurasByID, aurasByName, auraReadable = collectPlayerAuras()
     local eating, drinking = checkEatingDrinking(aurasByID, aurasByName)
 
+    local openBags = (addon.Visuals and addon.Visuals.GetOpenBagSources and addon.Visuals.GetOpenBagSources()) or {}
+
     P("===== DIAGNÓSTICO FOOD, POTIONS & ITENS =====")
-    P(string.format("combat=%s moving=%s mounted=%s bagOpen=%s hp=%s mana=%s hasMana=%s",
+    P(string.format("combat=%s moving=%s mounted=%s bagOpen=%s (%s) hp=%s mana=%s hasMana=%s lvl=%d",
         tostring(env.inCombat), tostring(env.moving), tostring(env.mounted), tostring(env.bagOpen),
+        (#openBags > 0) and table.concat(openBags, ",") or "nenhuma",
         env.hpPct and string.format("%.1f%%", env.hpPct) or "nil",
         env.manaPct and string.format("%.1f%%", env.manaPct) or "nil",
-        tostring(env.hasMana)))
+        tostring(env.hasMana), playerLevel()))
     P(string.format("eating=%s drinking=%s aurasReadable=%s swimming=%s breath=%s lastCast=%s",
         tostring(eating), tostring(drinking), tostring(auraReadable),
         tostring(env.swimming), env.breathPct and string.format("%.1f%%", env.breathPct) or "nil",
         tostring(state.lastCastSummary)))
-    P(string.format("config: food=%s(<%d%%) drink=%s(<%d%%) bonus=%s(elix=%s,scroll=%s) customRules=%d",
+    P(string.format("config: food=%s(<%d%%) drink=%s(<%d%%) healPot=%s(<%d%%) manaPot=%s(<%d%%) bonus=%s(elix=%s,scroll=%s) customRules=%d",
         tostring(cfg.foodEnabled), cfg.foodThreshold or 50,
         tostring(cfg.drinkEnabled), cfg.drinkThreshold or 50,
+        tostring(cfg.healPotEnabled), cfg.healPotThreshold or 40,
+        tostring(cfg.manaPotEnabled), cfg.manaPotThreshold or 35,
         tostring(cfg.bonusEnabled), tostring(cfg.bonusElixirs), tostring(cfg.bonusScrolls),
         #(cfg.customRules or {})))
 
-    local bestFood, bestDrink
-    local bonusList = {}
+    local pLvl = playerLevel()
+    local bestFood, bestDrink, bestHealPot, bestManaPot
+    local bonusList, allConsumables = {}, {}
     for _, entry in pairs(owned) do
         local m = entry.meta
         if m then
-            if m.isFood and isBetterCandidate(entry, bestFood, "foodRestore") then bestFood = entry end
-            if m.isDrink and isBetterCandidate(entry, bestDrink, "drinkRestore") then bestDrink = entry end
+            if m.classID == 0 or m.isFood or m.isDrink or m.isHealPot or m.isManaPot or m.longBuff then
+                allConsumables[#allConsumables + 1] = entry
+            end
+            local lvlOK = (m.minLevel or 0) <= pLvl
+            if lvlOK and m.isFood and isBetterCandidate(entry, bestFood, "foodTier", "foodRestore") then bestFood = entry end
+            if lvlOK and m.isDrink and isBetterCandidate(entry, bestDrink, "drinkTier", "drinkRestore") then bestDrink = entry end
+            if lvlOK and m.isHealPot and isBetterCandidate(entry, bestHealPot, "healPotTier", "healPotRestore") then bestHealPot = entry end
+            if lvlOK and m.isManaPot and isBetterCandidate(entry, bestManaPot, "manaPotTier", "manaPotRestore") then bestManaPot = entry end
             if m.longBuff then bonusList[#bonusList + 1] = entry end
         end
     end
 
-    if bestFood then
-        local cd, cdSrc = isItemOnCooldown(bestFood.itemID, bestFood.bag, bestFood.slot)
-        P(string.format("  Melhor Comida: [%d] %s (valor=%dc restore=%d lvl=%d onBar=%s cd=%s/%s)",
-            bestFood.itemID, bestFood.meta.name, bestFood.meta.sellPrice, bestFood.meta.foodRestore,
-            bestFood.meta.minLevel, tostring(bestFood.onBar), tostring(cd), tostring(cdSrc)))
-    else
-        P("  Melhor Comida: nenhuma encontrada na bolsa")
+    local function countButtons(itemID)
+        local bagBtns = (addon.Visuals and addon.Visuals.FindBagItemButtons and addon.Visuals.FindBagItemButtons(itemID)) or {}
+        local barBtns = (addon.Visuals and addon.Visuals.FindItemButtons and addon.Visuals.FindItemButtons(itemID)) or {}
+        return #bagBtns, #barBtns
     end
 
-    if bestDrink then
-        local cd, cdSrc = isItemOnCooldown(bestDrink.itemID, bestDrink.bag, bestDrink.slot)
-        P(string.format("  Melhor Bebida: [%d] %s (valor=%dc restore=%d lvl=%d onBar=%s cd=%s/%s)",
-            bestDrink.itemID, bestDrink.meta.name, bestDrink.meta.sellPrice, bestDrink.meta.drinkRestore,
-            bestDrink.meta.minLevel, tostring(bestDrink.onBar), tostring(cd), tostring(cdSrc)))
-    else
-        P("  Melhor Bebida: nenhuma encontrada na bolsa")
+    local function dumpBest(label, entry, tierField, restoreField)
+        if not entry then
+            P("  " .. label .. ": nenhum encontrado na bolsa (usável no seu nível)")
+            return
+        end
+        local cd, cdSrc = isItemOnCooldown(entry.itemID, entry.bag, entry.slot)
+        local nBag, nBar = countButtons(entry.itemID)
+        P(string.format("  %s: [%d] %s (tier=%d valor=%dc restore=%d lvl=%d bag=%d:%d bagBtns=%d barBtns=%d cd=%s/%s)",
+            label, entry.itemID, entry.meta.name,
+            entry.meta[tierField] or 0, entry.meta.sellPrice, entry.meta[restoreField] or 0,
+            entry.meta.minLevel, entry.bag, entry.slot, nBag, nBar, tostring(cd), tostring(cdSrc)))
     end
+
+    dumpBest("Melhor Comida", bestFood, "foodTier", "foodRestore")
+    dumpBest("Melhor Bebida", bestDrink, "drinkTier", "drinkRestore")
+    dumpBest("Melhor Poção de Vida", bestHealPot, "healPotTier", "healPotRestore")
+    dumpBest("Melhor Poção de Mana", bestManaPot, "manaPotTier", "manaPotRestore")
 
     P("  Poções/Pergaminhos 5+ min na bolsa:", #bonusList)
     for _, entry in ipairs(bonusList) do
         local lb = entry.meta.longBuff
         local active = isLongBuffActive(entry, aurasByID, aurasByName)
         local cd = isItemOnCooldown(entry.itemID, entry.bag, entry.slot)
-        P(string.format("    [%d] %s | cat=%s grp=%s dur=%ds valor=%dc buffAtivo=%s onBar=%s cd=%s",
-            entry.itemID, entry.meta.name, lb.category, lb.group, lb.duration,
-            entry.meta.sellPrice, tostring(active), tostring(entry.onBar), tostring(cd)))
+        local nBag, nBar = countButtons(entry.itemID)
+        P(string.format("    [%d] %s | cat=%s grp=%s tier=%d dur=%ds valor=%dc buffAtivo=%s bagBtns=%d barBtns=%d cd=%s",
+            entry.itemID, entry.meta.name, lb.category, lb.group, lb.tier or 0, lb.duration,
+            entry.meta.sellPrice, tostring(active), nBag, nBar, tostring(cd)))
     end
 
     P("  Regras personalizadas:", #(cfg.customRules or {}))
@@ -1319,7 +1749,25 @@ function Consumables.DebugDump()
     local activeSugs = Consumables.GetSuggestions()
     P("  Sugestões ativas agora:", #activeSugs)
     for _, s in ipairs(activeSugs) do
-        P("    -> itemID=", s.itemID, "color=", s.color, "source=", s.source)
+        local nBag, nBar = countButtons(s.itemID)
+        P(string.format("    -> itemID=%d color=%s source=%s bagBtns=%d barBtns=%d",
+            s.itemID, tostring(s.color), tostring(s.source), nBag, nBar))
+    end
+
+    table.sort(allConsumables, function(a, b) return a.itemID < b.itemID end)
+    P("  Todos consumíveis (classID=0) escaneados na bolsa:", #allConsumables)
+    for _, entry in ipairs(allConsumables) do
+        local m = entry.meta
+        local flags = {}
+        if m.isFood then flags[#flags + 1] = "F" end
+        if m.isDrink then flags[#flags + 1] = "D" end
+        if m.isHealPot then flags[#flags + 1] = "HP" end
+        if m.isManaPot then flags[#flags + 1] = "MP" end
+        if m.longBuff then flags[#flags + 1] = "LB:" .. tostring(m.longBuff.category) end
+        P(string.format("    [%d] %s | sub=%d(%s) lvl=%d price=%dc spell=%s(%s) flags=%s tipLen=%d",
+            entry.itemID, m.name, m.subClassID, m.itemSubType, m.minLevel, m.sellPrice,
+            tostring(m.spellName or "-"), tostring(m.spellID or "-"),
+            (#flags > 0) and table.concat(flags, ",") or "NONE", m.tipLen or 0))
     end
     P("===== FIM DIAGNÓSTICO =====")
 end
@@ -1540,10 +1988,34 @@ local function buildConsumablesTab(host)
     fdHint:SetJustifyH("LEFT")
     fdHint:SetWordWrap(true)
     fdHint:SetText(loc("cons_food_drink_hint",
-        "Bolsa aberta: destaca o item de maior valor na bolsa (e na barra se estiver nela). Bolsa fechada: destaca na barra. Comida e água podem brilhar juntas e param ao comer/beber."))
+        "Bolsa aberta: destaca o melhor item usável na bolsa (e na barra se estiver nela). Bolsa fechada: destaca na barra. Comida e água podem brilhar juntas e param ao comer/beber."))
     y = y - 34
 
-    -- Section 2: Long-duration (5+ min) bonus potions, elixirs and scrolls
+    -- Section 2: Combat Potions (Healing / Healthstone & Mana) — automatic best-item ranking
+    y = makeHeader(y, loc("cons_section_combat_pots", "Poções de Combate (em combate — escolhe a melhor)"))
+
+    y = makeThresholdRow(y, loc("cons_heal_pot_enable", "Recomendar Poção de Vida"),
+        cfg.healPotEnabled, cfg.healPotThreshold,
+        function(v) cfg.healPotEnabled = v end,
+        function(v) cfg.healPotThreshold = v end)
+
+    if Consumables.PlayerHasMana() then
+        y = makeThresholdRow(y, loc("cons_mana_pot_enable", "Recomendar Poção de Mana"),
+            cfg.manaPotEnabled, cfg.manaPotThreshold,
+            function(v) cfg.manaPotEnabled = v end,
+            function(v) cfg.manaPotThreshold = v end)
+    end
+
+    local cpHint = parent:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+    cpHint:SetPoint("TOPLEFT", parent, "TOPLEFT", 8, y)
+    cpHint:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -8, y)
+    cpHint:SetJustifyH("LEFT")
+    cpHint:SetWordWrap(true)
+    cpHint:SetText(loc("cons_combat_pots_hint",
+        "Em combate, destaca automaticamente a poção de vida/mana (ou pedra de vida) mais valiosa da bolsa/barra quando cair abaixo do % escolhido."))
+    y = y - 30
+
+    -- Section 3: Long-duration (5+ min) bonus potions, elixirs and scrolls
     y = makeHeader(y, loc("cons_section_bonus", "Poções de bônus e pergaminhos (5+ min)"))
 
     local function makeSimpleCheck(yPos, indent, labelText, checked, onToggle)

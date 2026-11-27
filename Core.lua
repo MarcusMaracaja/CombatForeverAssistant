@@ -361,20 +361,21 @@ frame:SetScript("OnUpdate", function(_, delta)
     if addon.Visuals and addon.Visuals.flashSpell and GetTime() < (addon.Visuals.flashUntil or 0) then
         addon.Visuals.Show(addon.Visuals.flashSpell, addon.Visuals.flashColor or "Utility")
         return
-    elseif addon.Visuals then
-        -- flash expired: make sure nothing stays lit
+    elseif addon.Visuals and addon.Visuals.flashSpell then
+        -- flash just expired: clear it once without wiping regular highlights every tick
         addon.Visuals.flashSpell, addon.Visuals.flashUntil = nil, nil
         if addon.Visuals.Hide then addon.Visuals.Hide() end
         if addon.KeyButton then
             if addon.db.keyButtonAlways then addon.KeyButton.ShowPlaceholder() else addon.KeyButton.Hide() end
         end
     end
-    -- Não recomendar nada enquanto o jogador estiver comendo ou bebendo (fora de combate),
-    -- para não interromper a alimentação com aspectos, buffs, habilidades ou itens.
+    -- Enquanto o jogador estiver comendo ou bebendo fora de combate, suprime a
+    -- rotação de classe (para não interromper com aspectos/buffs/skills), mas
+    -- mantém o pipeline de Consumables para permitir comer E beber ao mesmo tempo.
     if addon.Consumables and type(addon.Consumables.IsEatingOrDrinking) == "function" then
         local okED, eatingOrDrinking = pcall(addon.Consumables.IsEatingOrDrinking)
         if okED and eatingOrDrinking then
-            clearPlayerSuggestions()
+            updateSuggestionDisplay(nil, mod)
             return
         end
     end

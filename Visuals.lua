@@ -164,25 +164,49 @@ end
 local function bagButtonItemID(button)
     if not button then return nil end
     local bagID, slotID
-    if type(button.GetBagID) == "function" then
+    -- Modern Dragonflight/Midnight ContainerFrameItemButtonMixin
+    if type(button.GetSlotAndBagID) == "function" then
+        local ok, s, b = pcall(button.GetSlotAndBagID, button)
+        if ok and type(s) == "number" and type(b) == "number" then
+            slotID, bagID = s, b
+        end
+    end
+    if bagID == nil and type(button.GetBagID) == "function" then
         local ok, b = pcall(button.GetBagID, button)
         if ok and type(b) == "number" then bagID = b end
     end
+    if bagID == nil and type(button.bagID) == "number" then
+        bagID = button.bagID
+    end
     if bagID == nil and type(button.GetParent) == "function" then
         local parent = button:GetParent()
-        if parent and type(parent.GetID) == "function" then
-            local ok, b = pcall(parent.GetID, parent)
-            if ok and type(b) == "number" then bagID = b end
+        if parent then
+            if type(parent.GetBagID) == "function" then
+                local ok, b = pcall(parent.GetBagID, parent)
+                if ok and type(b) == "number" then bagID = b end
+            end
+            if bagID == nil and type(parent.GetID) == "function" then
+                local ok, b = pcall(parent.GetID, parent)
+                if ok and type(b) == "number" then bagID = b end
+            end
         end
     end
-    if type(button.GetID) == "function" then
+    if slotID == nil and type(button.GetID) == "function" then
         local ok, s = pcall(button.GetID, button)
         if ok and type(s) == "number" then slotID = s end
     end
+    if slotID == nil and type(button.slotID) == "number" then
+        slotID = button.slotID
+    end
     if bagID == nil or slotID == nil or slotID <= 0 then return nil end
+
     if C_Container and type(C_Container.GetContainerItemID) == "function" then
         local ok, id = pcall(C_Container.GetContainerItemID, bagID, slotID)
         if ok and type(id) == "number" then return id end
+    end
+    if C_Container and type(C_Container.GetContainerItemInfo) == "function" then
+        local ok, info = pcall(C_Container.GetContainerItemInfo, bagID, slotID)
+        if ok and type(info) == "table" and type(info.itemID) == "number" then return info.itemID end
     end
     if type(GetContainerItemID) == "function" then
         local ok, id = pcall(GetContainerItemID, bagID, slotID)
@@ -191,13 +215,25 @@ local function bagButtonItemID(button)
     return nil
 end
 
+local function isFrameVisible(f)
+    if not f then return false end
+    if type(f.IsVisible) == "function" then
+        local ok, v = pcall(f.IsVisible, f)
+        if ok then return v == true end
+    end
+    if type(f.IsShown) == "function" then
+        local ok, v = pcall(f.IsShown, f)
+        if ok then return v == true end
+    end
+    return false
+end
+
 local function collectVisibleBagButtons(wantItemID)
     local out = {}
     local seen = {}
     local function inspectButton(btn)
-        if not btn or seen[btn] then return end
-        local okShown, shown = pcall(btn.IsShown, btn)
-        if not okShown or not shown then return end
+        if type(btn) ~= "table" or seen[btn] then return end
+        if not isFrameVisible(btn) then return end
         seen[btn] = true
         if wantItemID == nil then
             out[#out + 1] = btn
@@ -208,53 +244,83 @@ local function collectVisibleBagButtons(wantItemID)
     end
 
     local function inspectContainer(container)
-        if not container then return end
-        local okShown, shown = pcall(container.IsShown, container)
-        if not okShown or not shown then return end
+        if not isFrameVisible(container) then return end
+        local foundAny = false
         if type(container.EnumerateValidItems) == "function" then
-            local okEnum = pcall(function()
-                for _, btn in container:EnumerateValidItems() do
-                    inspectButton(btn)
+            pcall(function()
+                for a, b in container:EnumerateValidItems() do
+                    local btn = type(b) == "table" and b or a
+                    if type(btn) == "table" then
+                        foundAny = true
+                        inspectButton(btn)
+                    end
                 end
             end)
-            if okEnum then return end
         end
-        local name = type(container.GetName) == "function" and container:GetName() or nil
-        if name then
-            for slot = 1, 36 do
-                local btn = _G[name .. "Item" .. slot]
-                if btn then inspectButton(btn) end
+        if not foundAny and type(container.Items) == "table" then
+            for _, btn in ipairs(container.Items) do
+                foundAny = true
+                inspectButton(btn)
+            end
+        end
+        if not foundAny then
+            local name = type(container.GetName) == "function" and container:GetName() or nil
+            if name then
+                for slot = 1, 36 do
+                    local btn = _G[name .. "Item" .. slot]
+                    if btn then inspectButton(btn) end
+                end
             end
         end
     end
 
-    -- Modern combined bag frame (Retail / Interface 16001)
+    -- 1) Modern combined bag frame (Retail / Interface 16001)
     if _G.ContainerFrameCombinedBags then
         inspectContainer(_G.ContainerFrameCombinedBags)
     end
-    -- Individual Blizzard bag frames (split bags / classic layout)
+    -- 2) Individual Blizzard bag frames (split bags / classic layout)
     local maxFrames = tonumber(_G.NUM_CONTAINER_FRAMES) or 13
     for i = 1, maxFrames do
         local cf = _G["ContainerFrame" .. i]
         if cf then inspectContainer(cf) end
     end
+    -- 3) ElvUI unified bag frame
+    if isFrameVisible(_G.ElvUI_ContainerFrame) then
+        local numBags = tonumber(_G.NUM_BAG_SLOTS) or 4
+        for bag = 0, numBags do
+            for slot = 1, 40 do
+                local btn = _G["ElvUI_ContainerFrameBag" .. bag .. "Slot" .. slot]
+                if btn then inspectButton(btn) end
+            end
+        end
+    end
+    -- 4) Bagnon inventory frame
+    if isFrameVisible(_G.BagnonInventoryFrame1) then
+        local frameObj = _G.BagnonInventoryFrame1
+        if type(frameObj.itemFrame) == "table" and type(frameObj.itemFrame.buttons) == "table" then
+            for _, btn in pairs(frameObj.itemFrame.buttons) do
+                inspectButton(btn)
+            end
+        end
+    end
     return out
 end
 
-function Visuals.IsAnyBagOpen()
-    if _G.ContainerFrameCombinedBags then
-        local ok, shown = pcall(_G.ContainerFrameCombinedBags.IsShown, _G.ContainerFrameCombinedBags)
-        if ok and shown then return true end
-    end
+function Visuals.GetOpenBagSources()
+    local sources = {}
+    if isFrameVisible(_G.ContainerFrameCombinedBags) then sources[#sources + 1] = "ContainerFrameCombinedBags" end
     local maxFrames = tonumber(_G.NUM_CONTAINER_FRAMES) or 13
     for i = 1, maxFrames do
         local cf = _G["ContainerFrame" .. i]
-        if cf then
-            local ok, shown = pcall(cf.IsShown, cf)
-            if ok and shown then return true end
-        end
+        if isFrameVisible(cf) then sources[#sources + 1] = "ContainerFrame" .. i end
     end
-    return false
+    if isFrameVisible(_G.ElvUI_ContainerFrame) then sources[#sources + 1] = "ElvUI_ContainerFrame" end
+    if isFrameVisible(_G.BagnonInventoryFrame1) then sources[#sources + 1] = "BagnonInventoryFrame1" end
+    return sources
+end
+
+function Visuals.IsAnyBagOpen()
+    return #Visuals.GetOpenBagSources() > 0
 end
 
 function Visuals.FindBagItemButtons(itemID)
@@ -267,6 +333,10 @@ function Visuals.DashRing(parent, radius, thickness, rgb, segments)
     segments = segments or 14
     local group = CreateFrame("Frame", nil, parent)
     group:SetAllPoints(parent)
+    pcall(function()
+        group:SetFrameStrata(parent:GetFrameStrata())
+        group:SetFrameLevel(parent:GetFrameLevel() + 10)
+    end)
     local chord = (2 * math.pi * radius / segments) * 0.72
     local thick = math.max(2, math.floor(thickness))
     for i = 1, segments do
@@ -286,8 +356,11 @@ end
 local function makeBorderOverlay(btn, rgb, width)
     local f = CreateFrame("Frame", nil, btn)
     f:SetAllPoints(btn)
-    f:SetFrameLevel(btn:GetFrameLevel() + 5)
-    local w = math.max(1, math.floor(width or 12))
+    pcall(function()
+        f:SetFrameStrata(btn:GetFrameStrata())
+        f:SetFrameLevel(btn:GetFrameLevel() + 10)
+    end)
+    local w = math.max(2, math.floor(width or 12))
     local bw = btn:GetWidth()
     local bh = btn:GetHeight()
     local function edge(point, horiz)
@@ -315,8 +388,11 @@ end
 
 local function makeTextureOverlay(btn, textureFile, rgb)
     local f = CreateFrame("Frame", nil, btn)
-    f:SetFrameLevel(btn:GetFrameLevel() + 5)
-    local size = math.max(btn:GetWidth(), btn:GetHeight()) * 1.45
+    pcall(function()
+        f:SetFrameStrata(btn:GetFrameStrata())
+        f:SetFrameLevel(btn:GetFrameLevel() + 10)
+    end)
+    local size = math.max(btn:GetWidth(), btn:GetHeight()) * 1.35
     f:SetSize(size, size)
     f:SetPoint("CENTER", btn, "CENTER")
     local texture = f:CreateTexture(nil, "OVERLAY")
