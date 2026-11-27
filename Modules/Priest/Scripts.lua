@@ -88,6 +88,7 @@ tracker:SetScript("OnEvent", function(_, event, ...)
     if event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_DEAD" then
         wipe(Priest.BuffBeliefs)
         wipe(Priest.TargetBeliefs)
+        if Priest.AllyBeliefs then wipe(Priest.AllyBeliefs) end
         addon:InvalidateSpecTalentCache("PRIEST")
     elseif event == "PLAYER_TARGET_CHANGED" then
         wipe(Priest.TargetBeliefs)
@@ -140,6 +141,39 @@ function Priest:SetSpecOverride(specKey)
     if specKey ~= "SHAD" and specKey ~= "DISC" and specKey ~= "HOLY" then return false end
     addon.charDb.priestSpec = specKey
     return true
+end
+
+-- ---------------------------------------------------------------------------
+-- Healer mode preference (per character): "auto" | "always" | "off"
+--   "auto"   = Holy/Discipline automatically heals in party/raid (or friendly target)
+--   "always" = Always run healer triage + portrait highlight (even solo or Shadow)
+--   "off"    = DPS only
+-- ---------------------------------------------------------------------------
+function Priest:GetHealMode()
+    local m = addon.charDb and addon.charDb.priestHealMode
+    if m == "always" or m == "off" or m == "auto" then return m end
+    return "auto"
+end
+
+function Priest:SetHealMode(mode)
+    if mode ~= "auto" and mode ~= "always" and mode ~= "off" then return false end
+    if addon.charDb then addon.charDb.priestHealMode = mode end
+    return true
+end
+
+function Priest:IsHealerModeActive(specKey)
+    local mode = self:GetHealMode()
+    if mode == "off" then return false end
+    if mode == "always" then return true end
+    -- "auto": activate healer mode when Holy or Discipline AND in a group/raid
+    -- (or when explicitly targeting a friendly ally)
+    if specKey ~= "HOLY" and specKey ~= "DISC" then return false end
+    if addon.Healer and addon.Healer.IsInGroup() then return true end
+    if UnitExists("target") and addon.Healer and addon.Healer.IsUnitFriendlyPlayer("target")
+        and not (addon.UnitIsSame and addon.UnitIsSame("target", "player")) then
+        return true
+    end
+    return false
 end
 
 -- ---------------------------------------------------------------------------
@@ -207,6 +241,56 @@ function Priest:BuildEnv(specKey)
         addon.PopulateEnvResources(env, "player")
     end
     if env.manaPct == nil then env.manaPct = 100 end
+
+    -- Populate Healer triage snapshot when Healer mode is active
+    local healerActive = self:IsHealerModeActive(specKey)
+    env.healerActive = healerActive
+    env.inGroup = addon.Healer and addon.Healer.IsInGroup() or false
+    if healerActive and addon.Healer and type(addon.Healer.ScanGroup) == "function" then
+        local probeHealID = Priest.ResolveID(2061) or Priest.ResolveID(2060)
+            or Priest.ResolveID(2054) or Priest.ResolveID(2050) or 2061
+        local probeResID = Priest.ResolveID(2006) or 2006
+        local hs = addon.Healer.ScanGroup({
+            inCombat            = inCombat,
+            healSpellID         = probeHealID,
+            resSpellID          = probeResID,
+            canDispelMagic      = Priest.ResolveID(527) ~= nil,
+            canDispelDisease    = (Priest.ResolveID(552) ~= nil or Priest.ResolveID(528) ~= nil),
+            canResurrect        = Priest.ResolveID(2006) ~= nil,
+            healThreshold       = 93,
+            proactiveTankShield = (Priest.ResolveID(17) ~= nil),
+            tankNeedsShieldFn   = function(u)
+                return not Priest.HasUnitBuff(u, 17, "pw_shield", "PowerWordShield")
+                    and not Priest.HasUnitWeakenedSoul(u)
+            end,
+        })
+        env.healState                = hs
+        env.inGroup                  = hs.inGroup
+        env.playerHasAggro           = hs.playerHasAggro
+        env.injuredCount82           = hs.injuredCount82
+        env.injuredCount72           = hs.injuredCount72
+        env.criticalCount55          = hs.criticalCount55
+        env.recommendedHealUnit      = hs.recommendedUnit
+        env.recommendedHealReason    = hs.recommendedReason
+        env.recommendedHealColor     = hs.recommendedColor
+        env.recommendedHealOutOfRange = hs.recommendedOutOfRange
+        env.healUnit                 = hs.activeUnit
+        env.healHP                   = hs.activeHP
+        env.healIsSelf               = hs.activeIsSelf
+        env.healIsDead               = hs.activeIsDead
+        env.healIsTank               = hs.activeIsTank
+        env.healInRange              = hs.activeInRange
+        env.healInResRange           = hs.activeInResRange
+        env.healDispelMagic          = hs.activeDispelMagic
+        env.healDispelDisease        = hs.activeDispelDisease
+        if hs.activeUnit and not hs.activeIsDead then
+            env.healTargetShield         = Priest.HasUnitBuff(hs.activeUnit, 17, "pw_shield", "PowerWordShield")
+            env.healTargetWeakenedSoul   = Priest.HasUnitWeakenedSoul(hs.activeUnit)
+            env.healTargetRenew          = Priest.HasUnitBuff(hs.activeUnit, 139, "renew", "Renew")
+            env.healTargetPoM            = Priest.HasUnitBuff(hs.activeUnit, 33076, "prayer_mending")
+            env.healTargetAbolishDisease = Priest.HasUnitBuff(hs.activeUnit, 552, "abolish_disease")
+        end
+    end
     return env
 end
 
@@ -255,11 +339,14 @@ function Priest:TryFlash(spellID, color, condition, nodeName, env, opts, asAddit
     end
 
     local dbg = {}
+    local targetUnit = (opts.unitKey and env and env[opts.unitKey])
+        or opts.unit
+        or (opts.noEnemy and "player" or "target")
     local castable = addon.CheckCastable({
         SpellID           = knownID,
         SpellName         = spellName,
         EnemyTargetNeeded = opts.noEnemy ~= true,
-        Unit              = opts.unit or (opts.noEnemy and "player" or "target"),
+        Unit              = targetUnit,
         NoRangeCheck      = (opts.noRangeCheck == true or opts.noRange == true),
         NotIfActive       = opts.notIfActive == true,
         Debug             = dbg,
@@ -349,14 +436,54 @@ function Priest:GetSuggestion()
     local specKey = self:DetectSpec()
     local env = self:BuildEnv(specKey)
 
-    addon:RunDeclaredRotation(self, specKey, env)
+    local unitHighlight = nil
+    if env.healerActive then
+        -- 1) Highlight the #1 ally's portrait / party / raid frame when anyone needs help
+        if env.recommendedHealUnit then
+            unitHighlight = {
+                kind   = "unitframe",
+                unit   = env.recommendedHealUnit,
+                color  = env.recommendedHealColor or "Defensive",
+                urgent = (env.recommendedHealReason == "emergency"),
+            }
+        end
+
+        -- 2) Run the dedicated Priest HEAL rotation (self-saves work immediately;
+        --    targeted heals/shields/dispels/resurrection fire once the healer has the
+        --    needing ally targeted AND in range!)
+        addon:RunDeclaredRotation(self, "HEAL", env)
+
+        -- 3) Quiet downtime fallback: when everyone is healthy (no ally needs attention),
+        --    mana >= 50%, and the healer targets an enemy, help with Smite DPS!
+        if not self.PendingSuggestion and not unitHighlight and env.hasActiveEnemy
+            and (addon.HasManaPct(50)) then
+            local dpsSpec = (specKey == "SHAD") and "SHAD" or ((specKey == "DISC") and "DISC" or "HOLY")
+            addon:RunDeclaredRotation(self, dpsSpec, env)
+        end
+    else
+        addon:RunDeclaredRotation(self, specKey, env)
+    end
 
     local extra = nextExtraSuggestion(env)
     local rotation = self.PendingSuggestion
 
     -- Low-priority racial when rotation has nothing else to recommend
-    if not rotation and addon.SuggestRacial and addon:SuggestRacial(self, env) then
+    if not rotation and not unitHighlight and addon.SuggestRacial and addon:SuggestRacial(self, env) then
         rotation = self.PendingSuggestion
+    end
+
+    -- In Healer mode, active healing / ally portrait highlight ALWAYS takes priority over Extra buffs
+    if env.healerActive and (rotation or unitHighlight) then
+        local primary = rotation or unitHighlight
+        if rotation and unitHighlight then
+            primary.additional = primary.additional or {}
+            table.insert(primary.additional, unitHighlight)
+        end
+        if extra and env.recommendedHealReason ~= "emergency" then
+            primary.additional = primary.additional or {}
+            table.insert(primary.additional, extra)
+        end
+        return primary
     end
 
     if extra then
@@ -373,29 +500,45 @@ function Priest:GetStatus()
     local specKey, source = self:DetectSpec()
     local title = self.RotationSpecs[specKey] and self.RotationSpecs[specKey].title or specKey
     local enabled = not (addon.db and addon.db.priestEnabled == false)
-    return string.format("Priest — %s (%s) — %s", tostring(title), tostring(source),
-        enabled and "ativo" or "desativado")
+    local healTag = self:IsHealerModeActive(specKey) and " [HEALER ATIVO]" or (" [heal=" .. self:GetHealMode() .. "]")
+    return string.format("Priest — %s (%s)%s — %s", tostring(title), tostring(source),
+        healTag, enabled and "ativo" or "desativado")
 end
 
 function Priest:DebugRotation()
     local specKey, source = self:DetectSpec()
     local env = self:BuildEnv(specKey)
+    local activeSpec = env.healerActive and "HEAL" or specKey
 
-    print("|cff44ddff[CFA dbg]|r ===== RELATÓRIO DA ROTAÇÃO (Priest DPS) =====")
+    print(string.format("|cff44ddff[CFA dbg]|r ===== RELATÓRIO DA ROTAÇÃO (Priest %s) =====",
+        env.healerActive and "HEALER" or "DPS"))
     print(string.format(
-        "|cff44ddff[CFA dbg]|r spec=%s (%s) | enemy=%s | combat=%s | moving=%s | AoE=%s(%d) | hp=%s | mana=%s(ok=%s)",
-        tostring(specKey), tostring(source), tostring(env.hasActiveEnemy), tostring(env.inCombat),
-        tostring(env.isMoving), tostring(env.isAoE), env.enemies or 0,
+        "|cff44ddff[CFA dbg]|r spec=%s (%s) | healMode=%s active=%s | inGroup=%s | enemy=%s | combat=%s | moving=%s | hp=%s | mana=%s(ok=%s)",
+        tostring(specKey), tostring(source), self:GetHealMode(), tostring(env.healerActive),
+        tostring(env.inGroup), tostring(env.hasActiveEnemy), tostring(env.inCombat),
+        tostring(env.isMoving),
         env.myHealth and string.format("%.0f%%", env.myHealth) or "nil",
         env.manaPct and string.format("%.1f%%", env.manaPct) or "nil", tostring(env.manaReadable)))
-    print(string.format(
-        "|cff44ddff[CFA dbg]|r shadowform=%s | shield=%s | weakSoul=%s | wand=%s | SW:P=%s | DP=%s | VT=%s | HF=%s",
-        tostring(env.shadowformActive), tostring(env.pwShieldActive), tostring(env.weakenedSoul),
-        tostring(env.hasWand), tostring(env.swPainActive), tostring(env.devouringPlagueActive),
-        tostring(env.vampiricTouchActive), tostring(env.holyFireActive)))
+    if env.healerActive then
+        print(string.format(
+            "|cff44ddff[CFA dbg]|r HEAL: rec=%s(%s,oor=%s) | active=%s(hp=%s,dead=%s,rng=%s,resRng=%s,tank=%s) | inj82=%d inj72=%d crit55=%d | shld=%s ws=%s ren=%s pom=%s",
+            tostring(env.recommendedHealUnit or "-"), tostring(env.recommendedHealReason or "-"),
+            tostring(env.recommendedHealOutOfRange), tostring(env.healUnit or "clique_no_aliado"),
+            env.healHP and string.format("%.0f%%", env.healHP) or "-", tostring(env.healIsDead),
+            tostring(env.healInRange), tostring(env.healInResRange), tostring(env.healIsTank),
+            env.injuredCount82 or 0, env.injuredCount72 or 0, env.criticalCount55 or 0,
+            tostring(env.healTargetShield), tostring(env.healTargetWeakenedSoul),
+            tostring(env.healTargetRenew), tostring(env.healTargetPoM)))
+    else
+        print(string.format(
+            "|cff44ddff[CFA dbg]|r shadowform=%s | shield=%s | weakSoul=%s | wand=%s | SW:P=%s | DP=%s | VT=%s | HF=%s",
+            tostring(env.shadowformActive), tostring(env.pwShieldActive), tostring(env.weakenedSoul),
+            tostring(env.hasWand), tostring(env.swPainActive), tostring(env.devouringPlagueActive),
+            tostring(env.vampiricTouchActive), tostring(env.holyFireActive)))
+    end
 
-    local nodes = (type(self.GetEffectiveNodes) == "function" and self:GetEffectiveNodes(specKey))
-        or (self.RotationSpecs[specKey] and self.RotationSpecs[specKey].nodes) or {}
+    local nodes = (type(self.GetEffectiveNodes) == "function" and self:GetEffectiveNodes(activeSpec))
+        or (self.RotationSpecs[activeSpec] and self.RotationSpecs[activeSpec].nodes) or {}
     for _, node in ipairs(nodes) do
         local enabled = node.enabled ~= false
         local condOK = enabled and addon.NodeConditionPass(self, env, node, true)
@@ -405,11 +548,12 @@ function Priest:DebugRotation()
         local castOK = false
         if condOK and knownID and locName then
             local opts = node.opts or {}
+            local unit = (opts.unitKey and env[opts.unitKey]) or opts.unit or (opts.noEnemy and "player" or "target")
             castOK = addon.CheckCastable({
                 SpellID           = knownID,
                 SpellName         = locName,
                 EnemyTargetNeeded = opts.noEnemy ~= true,
-                Unit              = opts.unit or (opts.noEnemy and "player" or "target"),
+                Unit              = unit,
                 NoRangeCheck      = (opts.noRangeCheck == true or opts.noRange == true),
                 NotIfActive       = opts.notIfActive == true,
                 Debug             = dbg,
@@ -469,7 +613,7 @@ local function attachPriestEditor()
     return addon.RotationEditor.Attach(Priest, {
         storageKey = "priestRotation",
         title      = (L and L["priest_tab"]) or "Priest",
-        specOrder  = { "SHAD", "DISC", "HOLY" },
+        specOrder  = { "SHAD", "DISC", "HOLY", "HEAL" },
         extraTabs  = {
             {
                 key    = "EXTRA",

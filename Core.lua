@@ -21,6 +21,7 @@ local defaults = {
     keyBgAlpha = 0.72,
     keyTextColor = { 1.0, 0.9, 0.3 },
     warnOutdated = true,
+    showWelcome = true,
     optionsWidth = 520,
     optionsHeight = 420,
     assistSmartTabEnabled = true,
@@ -2108,6 +2109,7 @@ function addon:GetRaceGreeting()
 end
 
 function addon:PrintWelcome()
+    if addon.db and addon.db.showWelcome == false then return end
     local _, className = UnitClass("player")
     local mod = addon.activeModule
     local spec, source
@@ -2187,6 +2189,12 @@ SlashCmdList["COMBATFOREVERASSISTANT"] = function(msg)
             mod:DebugRotation()
         else
             print("|cff44ddff[CFA]|r Módulo Priest indisponível.")
+        end
+    elseif msg == "heal" or msg == "healer" then
+        if addon.Healer and type(addon.Healer.DebugDump) == "function" then
+            addon.Healer.DebugDump()
+        else
+            print("|cff44ddff[CFA]|r Módulo Healer indisponível.")
         end
     elseif msg == "warrior" then
         local mod = addon.modules and addon.modules.WARRIOR

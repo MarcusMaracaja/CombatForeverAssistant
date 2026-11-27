@@ -872,6 +872,10 @@ function buildGeneralTab(parent)
         function() return addon.db.warnOutdated end,
         function(v) addon.db.warnOutdated = v end)
 
+    checkbox(L["opt_show_welcome"],
+        function() return addon.db.showWelcome ~= false end,
+        function(v) addon.db.showWelcome = v end)
+
     local save = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
     save:SetWidth(140)
     save:SetHeight(24)

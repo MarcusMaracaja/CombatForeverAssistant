@@ -72,6 +72,30 @@ local function BuildPriestTab(host)
     end
     refreshSpecButtons()
 
+    header(L["priest_heal_mode_header"])
+    local healModeButtons = {}
+    local healModeValues = { "auto", "always", "off" }
+    local healModeLabels = {
+        auto   = L["priest_heal_mode_auto"],
+        always = L["priest_heal_mode_always"],
+        off    = L["priest_heal_mode_off"],
+    }
+    local function refreshHealModeButtons()
+        local selected = module:GetHealMode()
+        for value, button in pairs(healModeButtons) do
+            button:SetChecked(selected == value)
+        end
+    end
+    for _, value in ipairs(healModeValues) do
+        local modeVal = value
+        healModeButtons[modeVal] = checkbox(healModeLabels[modeVal], false, function()
+            module:SetHealMode(modeVal)
+            refreshHealModeButtons()
+        end)
+    end
+    refreshHealModeButtons()
+    hint(L["priest_heal_mode_hint"])
+
     header(L["rotation_editor_header"])
     y = addon.Options.AddRotationEditorControls(parent, y, module.OpenRotationEditor,
         L["priest_rotation_hint"])

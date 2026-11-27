@@ -328,6 +328,139 @@ function Visuals.FindBagItemButtons(itemID)
     return collectVisibleBagButtons(itemID)
 end
 
+-- ---------------------------------------------------------------------------
+-- Party / Raid / Player unit-frame discovery & non-tainting visual overlay
+-- Supports Blizzard default (modern PartyFrame & classic PartyMemberFrame),
+-- CompactPartyFrame / CompactRaidFrame, ElvUI, Cell, Grid2 and VuhDo.
+-- ---------------------------------------------------------------------------
+local function frameUnitMatches(frameObj, wantUnit)
+    if type(frameObj) ~= "table" or not isFrameVisible(frameObj) then return false end
+    local fUnit
+    pcall(function()
+        fUnit = frameObj.displayedUnit or frameObj.unit
+        if not fUnit and type(frameObj.GetAttribute) == "function" then
+            fUnit = frameObj:GetAttribute("unit")
+        end
+    end)
+    if type(fUnit) ~= "string" or fUnit == "" then return false end
+    if addon.UnitIsSame then return addon.UnitIsSame(fUnit, wantUnit) end
+    if type(UnitIsUnit) == "function" then
+        local ok, same = pcall(UnitIsUnit, fUnit, wantUnit)
+        return ok and same == true
+    end
+    return fUnit == wantUnit
+end
+
+local function findPortraitRegion(frameObj)
+    if type(frameObj) ~= "table" then return nil end
+    local name = (type(frameObj.GetName) == "function") and frameObj:GetName() or nil
+    local candidates = {}
+    pcall(function()
+        if frameObj.PlayerFrameContainer and frameObj.PlayerFrameContainer.PlayerPortrait then
+            candidates[#candidates + 1] = frameObj.PlayerFrameContainer.PlayerPortrait
+        end
+        if frameObj.Portrait then candidates[#candidates + 1] = frameObj.Portrait end
+        if frameObj.portrait then candidates[#candidates + 1] = frameObj.portrait end
+        if name and _G[name .. "Portrait"] then
+            candidates[#candidates + 1] = _G[name .. "Portrait"]
+        end
+        if frameObj == _G.PlayerFrame and _G.PlayerPortrait then
+            candidates[#candidates + 1] = _G.PlayerPortrait
+        end
+    end)
+    for _, p in ipairs(candidates) do
+        if type(p) == "table" and isFrameVisible(p) and type(p.GetWidth) == "function" then
+            local okW, w = pcall(p.GetWidth, p)
+            local okH, h = pcall(p.GetHeight, p)
+            if okW and okH and type(w) == "number" and type(h) == "number"
+                and w >= 20 and w <= 120 and math.abs(w - h) <= 18 then
+                return p
+            end
+        end
+    end
+    return nil
+end
+
+function Visuals.FindUnitFrames(unit)
+    if type(unit) ~= "string" or unit == "" then return {} end
+    local out = {}
+    local seen = {}
+
+    local function consider(frameObj, forceMatch)
+        if type(frameObj) ~= "table" or seen[frameObj] then return end
+        if not isFrameVisible(frameObj) then return end
+        if not forceMatch and not frameUnitMatches(frameObj, unit) then return end
+        seen[frameObj] = true
+        local name = (type(frameObj.GetName) == "function") and frameObj:GetName() or "UnitFrame"
+        out[#out + 1] = {
+            frame = frameObj,
+            portrait = findPortraitRegion(frameObj),
+            name = name,
+        }
+    end
+
+    local isSelf = (addon.UnitIsSame and addon.UnitIsSame(unit, "player")) or (unit == "player")
+    if isSelf then
+        if _G.PlayerFrame then consider(_G.PlayerFrame, true) end
+        if _G.ElvUF_Player then consider(_G.ElvUF_Player, true) end
+    end
+
+    -- 1) Blizzard modern PartyFrame pool (Dragonflight / Interface 16001)
+    if _G.PartyFrame and _G.PartyFrame.PartyMemberFramePool
+        and type(_G.PartyFrame.PartyMemberFramePool.EnumerateActive) == "function" then
+        pcall(function()
+            for memberFrame in _G.PartyFrame.PartyMemberFramePool:EnumerateActive() do
+                consider(memberFrame)
+            end
+        end)
+    end
+
+    -- 2) Blizzard classic PartyMemberFrame1..4
+    for i = 1, 4 do
+        consider(_G["PartyMemberFrame" .. i])
+    end
+
+    -- 3) Blizzard Raid-Style Party Frames (CompactPartyFrameMember1..5)
+    for i = 1, 5 do
+        consider(_G["CompactPartyFrameMember" .. i])
+    end
+
+    -- 4) Blizzard CompactRaidFrames (flat 1..40 and grouped 1..8 x 1..5)
+    for i = 1, 40 do
+        consider(_G["CompactRaidFrame" .. i])
+    end
+    for g = 1, 8 do
+        for m = 1, 5 do
+            consider(_G["CompactRaidGroup" .. g .. "Member" .. m])
+        end
+    end
+
+    -- 5) ElvUI Party & Raid frames
+    for m = 1, 5 do
+        consider(_G["ElvUF_PartyGroup1UnitButton" .. m])
+    end
+    local elvPrefixes = { "ElvUF_Raid1Group", "ElvUF_Raid2Group", "ElvUF_Raid3Group", "ElvUF_RaidGroup", "ElvUF_Raid40Group" }
+    for _, pref in ipairs(elvPrefixes) do
+        for g = 1, 8 do
+            for m = 1, 5 do
+                consider(_G[pref .. g .. "UnitButton" .. m])
+            end
+        end
+    end
+
+    -- 6) Cell / Grid2 / VuhDo popular healer raid frames
+    for m = 1, 5 do
+        consider(_G["CellPartyFrameMember" .. m])
+    end
+    for i = 1, 40 do
+        consider(_G["CellRaidFrameHeader0UnitButton" .. i])
+        consider(_G["Grid2LayoutHeader1UnitButton" .. i])
+        consider(_G["Vd1H" .. i])
+    end
+
+    return out
+end
+
 -- public so the minimap button (and others) can reuse the same dashed ring
 function Visuals.DashRing(parent, radius, thickness, rgb, segments)
     segments = segments or 14
@@ -501,6 +634,83 @@ local function showItem(itemID, reason, highlightBags)
     end
 end
 
+-- Purely visual, non-interactive overlay parented to UIParent (zero taint in combat lockdown!).
+-- Uses a pulsing ring around round portraits (Blizzard Party/Player) or a crisp pulsing
+-- colored border around rectangular party/raid unit cards (CompactRaid, ElvUI, Cell, etc.).
+local function makeUnitFrameOverlay(entry, rgb, urgent)
+    local target = entry.portrait or entry.frame
+    local f = CreateFrame("Frame", nil, UIParent)
+    f:EnableMouse(false)
+    f:SetAllPoints(target)
+    pcall(function()
+        f:SetFrameStrata(entry.frame:GetFrameStrata() or "HIGH")
+        f:SetFrameLevel((entry.frame:GetFrameLevel() or 1) + 12)
+    end)
+
+    if entry.portrait then
+        local w = target:GetWidth() or 48
+        local radius = w * 0.56
+        local thick = urgent and 5 or 4
+        local segments = 16
+        local chord = (2 * math.pi * radius / segments) * 0.78
+        for i = 1, segments do
+            local a = (i / segments) * math.pi * 2
+            local dx, dy = math.cos(a), math.sin(a)
+            local tex = f:CreateTexture(nil, "OVERLAY")
+            tex:SetTexture("Interface\\Buttons\\WHITE8X8")
+            tex:SetVertexColor(rgb[1], rgb[2], rgb[3], 1)
+            tex:SetWidth(chord)
+            tex:SetHeight(thick)
+            tex:SetPoint("CENTER", f, "CENTER", dx * radius, dy * radius)
+            pcall(function() tex:SetRotation(a + math.pi / 2) end)
+        end
+    else
+        local edgeW = urgent and 5 or 4
+        local function edge(point, horiz)
+            local tex = f:CreateTexture(nil, "OVERLAY")
+            tex:SetTexture("Interface\\Buttons\\WHITE8X8")
+            tex:SetVertexColor(rgb[1], rgb[2], rgb[3], 1)
+            if horiz then
+                tex:SetHeight(edgeW)
+                tex:SetPoint(point .. "LEFT", f, point .. "LEFT", -1, 0)
+                tex:SetPoint(point .. "RIGHT", f, point .. "RIGHT", 1, 0)
+            else
+                tex:SetWidth(edgeW)
+                tex:SetPoint("TOP" .. point, f, "TOP" .. point, 0, 1)
+                tex:SetPoint("BOTTOM" .. point, f, "BOTTOM" .. point, 0, -1)
+            end
+        end
+        edge("TOP", true)
+        edge("BOTTOM", true)
+        edge("LEFT", false)
+        edge("RIGHT", false)
+    end
+
+    local pulse = f:CreateAnimationGroup()
+    pulse:SetLooping("BOUNCE")
+    local alpha = pulse:CreateAnimation("Alpha")
+    if alpha and type(alpha.SetFromAlpha) == "function" then
+        alpha:SetFromAlpha(urgent and 0.40 or 0.55)
+        alpha:SetToAlpha(1.0)
+        alpha:SetDuration(urgent and 0.28 or 0.45)
+        f.pulse = pulse
+        pulse:Play()
+    end
+    return f
+end
+
+local function showUnitFrame(unit, reason, urgent)
+    if not unit then return end
+    local rgb = COLORS[reason] or COLORS.Defensive
+    local entries = Visuals.FindUnitFrames(unit)
+    for _, entry in ipairs(entries) do
+        local keyObj = entry.portrait or entry.frame
+        if keyObj and not highlighted[keyObj] then
+            highlighted[keyObj] = makeUnitFrameOverlay(entry, rgb, urgent)
+        end
+    end
+end
+
 function Visuals.ShowMany(suggestions)
     ensureMap()
     if type(suggestions) ~= "table" then
@@ -517,12 +727,17 @@ function Visuals.ShowMany(suggestions)
     }
     for _, suggestion in ipairs(suggestions) do
         if type(suggestion) == "table" then
-            local bagSlotsSig = ""
+            local extraSig = ""
             if suggestion.kind == "item" and suggestion.highlightBags and bagOpen and suggestion.itemID then
                 local bagBtns = Visuals.FindBagItemButtons(suggestion.itemID)
                 local ptrs = {}
                 for _, bb in ipairs(bagBtns) do ptrs[#ptrs + 1] = tostring(bb) end
-                bagSlotsSig = table.concat(ptrs, ",")
+                extraSig = table.concat(ptrs, ",")
+            elseif suggestion.kind == "unitframe" and suggestion.unit then
+                local uEntries = Visuals.FindUnitFrames(suggestion.unit)
+                local ptrs = {}
+                for _, ue in ipairs(uEntries) do ptrs[#ptrs + 1] = tostring(ue.portrait or ue.frame) end
+                extraSig = tostring(suggestion.unit) .. ":" .. tostring(suggestion.urgent and "1" or "0") .. ":" .. table.concat(ptrs, ",")
             end
             signature[#signature + 1] = table.concat({
                 tostring(suggestion.kind or "spell"),
@@ -530,7 +745,7 @@ function Visuals.ShowMany(suggestions)
                 tostring(suggestion.itemID or ""),
                 tostring(suggestion.color or suggestion.reason or "Utility"),
                 tostring(suggestion.highlightBags and "bag" or "bar"),
-                bagSlotsSig,
+                extraSig,
             }, ":")
         end
     end
@@ -542,6 +757,8 @@ function Visuals.ShowMany(suggestions)
         if type(suggestion) == "table" then
             if suggestion.kind == "item" then
                 showItem(suggestion.itemID, suggestion.color or suggestion.reason, suggestion.highlightBags)
+            elseif suggestion.kind == "unitframe" then
+                showUnitFrame(suggestion.unit, suggestion.color or suggestion.reason, suggestion.urgent)
             else
                 showSpell(suggestion.spellID, suggestion.color or suggestion.reason)
             end

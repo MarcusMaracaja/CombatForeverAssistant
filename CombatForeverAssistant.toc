@@ -18,6 +18,7 @@ Options.lua
 Shared\Assist.lua
 Shared\Functions.lua
 Shared\Predicates.lua
+Shared\Healer.lua
 Shared\RotationEditor.lua
 Modules\Hunter\ClassFeatures.lua
 Modules\Hunter\Scripts_SV.lua
@@ -39,6 +40,7 @@ Modules\Druid\Options.lua
 Modules\Priest\ClassFeatures.lua
 Modules\Priest\Scripts_SHAD.lua
 Modules\Priest\Scripts_DISC.lua
+Modules\Priest\Scripts_HEAL.lua
 Modules\Priest\Scripts.lua
 Modules\Priest\Options.lua
 Modules\Warrior\ClassFeatures.lua

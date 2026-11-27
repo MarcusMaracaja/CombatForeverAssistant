@@ -246,3 +246,52 @@ Checklist mantida a cada implementação para validação posterior no cliente *
 
 ### Se algo não funcionar como esperado
 - Abra a bolsa com as comidas/águas/poções, fique na situação em que deveria brilhar e cole na próxima sessão a saída completa de `/cfa items` (a nova seção `Todos consumíveis (classID=0) escaneados na bolsa` e os valores de `bagBtns` / `bagOpen` vão mostrar a causa exata na hora).
+
+---
+
+## H-0240 — Motor Global de Healer (`Shared/Healer.lua`) + Contorno no Retrato de Aliados (`Visuals.lua`) + Priest Curandeiro (`Scripts_HEAL.lua`)
+
+### Comandos de diagnóstico disponíveis no chat
+- `/cfa heal` (alias: `/cfa healer`) — relatório completo da triagem de grupo/raide:
+  - `inGroup`, `isRaid`, `size`, `combat`, `aggro`, `avgHP`, `inj82`, `inj72`, `crit55`, `dead`;
+  - `RECOMENDADO`: qual aliado deve ser clicado, motivo (`emergency`, `heal`, `tank_shield`, `dispel_magic`, `dispel_disease`, `resurrect`), se está `outOfRange` e a cor do contorno;
+  - `ALVO ATIVO P/ CURA`: se você já selecionou o aliado certo, HP%, `inRange` / `resRange`, e debuffs dissipáveis;
+  - Lista de cada membro do grupo com `role`, `hp(ok=true/false)`, `dead`, `range`, `disp` e **`ui=[...]`** (quais frames/retratos visuais do Blizzard/ElvUI/CompactRaid foram detectados para contornar!).
+- `/cfa priest` — quando em modo Healer, imprime o relatório completo da rotação `HEAL` nó-a-nó (`en`, `cond`, `id`, `cast` e motivo de recusa).
+- `/cfa status` — confirma se `[HEALER ATIVO]` está ligado.
+
+### Checklist de testes (Sacerdote Curandeiro — Grupo, Raide e Teste Solo)
+1. **[ ] Teste rápido SOLO (sem precisar de grupo!)**
+   - Logar no Sacerdote, fazer `/reload`, abrir `/cfa` -> aba **Sacerdote** -> marcar **Modo Curandeiro: Sempre Healer (inclusive solo)** (e opcionalmente spec **Sagrado** ou **Disciplina**).
+   - Abrir `/cfa` -> **Abrir editor de rotação** -> confirmar que a nova aba **`Healer (Grupo/Raide)`** aparece ao lado de `Shadow`, `Discipline`, `Holy` e `Extra`.
+   - Deixar um mob tirar um pouco da sua vida (ex.: ficar com ~70% e depois ~40% HP):
+     - Esperado: o **retrato do seu PlayerFrame** (ou quadro no ElvUI) ganha contorno pulsante (verde em 70%, vermelho urgente em <= 35%) e sua barra de ações destaca a cura ideal (**Renovar** <= 92%, **Cura Maior/Cura/Cura Menor** <= 75%, **Escudo** <= 45% em combate, **Cura Célere / Flash Heal** <= 50%, **Prece Desesperada** <= 40%).
+     - Rodar `/cfa heal` e `/cfa priest` durante o teste para conferir `ui=[...]` e `hp(ok=true)`.
+2. **[ ] Contorno no aliado do Grupo / Raide (2 etapas: Escolher Aliado -> Curar)**
+   - Entrar em uma party ou raide (ou masmorra) com modo **Automático (Sagrado/Disciplina em grupo ou raide)**.
+   - Quando um aliado (ex.: o Tanque ou um DPS) tomar dano enquanto você ainda está mirando o chefe/mob:
+     - **Etapa 1:** O retrato/cartão desse aliado no frame de Grupo/Raide deve **brilhar/pulsar** (Verde = cura normal, Vermelho = crítico `<= 35%`, Ciano = Reviver ou Dispel, Amarelo = **fora de alcance**!).
+     - Nenhuma cura direcionada errada deve brilhar na barra enquanto você ainda mira o inimigo (evita gastar mana curando você mesmo por engano).
+     - **Etapa 2:** Clique no aliado destacado -> se ele estiver **no alcance**, a habilidade de cura/escudo/dispel ideal acende imediatamente na barra e no Botão de Tecla!
+3. **[ ] Verificação de Alcance (Out of Range)**
+   - Afastar-se a mais de 40 jardas de um aliado ferido.
+   - Esperado: o quadro do aliado fica com contorno **Amarelo** (aviso para se aproximar) e **não** recomenda lançar cura fora de alcance; ao se aproximar (<= 40 jardas), o contorno volta para Verde/Vermelho e a cura acende!
+4. **[ ] Escudo (Alma Enfraquecida) e Renovar (sem spam)**
+   - Usar **Palavra de Poder: Escudo** num aliado -> confirmar que **não** recomenda Escudo de novo enquanto *Alma Enfraquecida (Weakened Soul)* estiver ativa (`ws=true` no `/cfa priest`).
+   - Usar **Renovar** num aliado -> confirmar que **não** repete Renovar enquanto já estiver ativo (`ren=true` no `/cfa priest`).
+5. **[ ] Reviver fora de combate vs. em combate**
+   - Com um aliado morto **em combate**: confirmar que **NÃO** recomenda *Ressurreição*.
+   - Assim que sair de combate: o quadro do aliado morto brilha em **Ciano**; ao clicar nele e entrar em alcance (30 jardas) parado, recomenda **Ressurreição (Resurrection)**.
+6. **[ ] Dano em Área, Dispel e Aggro no Curandeiro**
+   - Quando 3+ aliados estiverem feridos: conferir recomendação de **Círculo de Cura** / **Prece de Cura** / **Hino Divino** / **Prece da Recomposição**.
+   - Quando um aliado receber debuff mágico ou de doença (sem ninguém em risco crítico): conferir **Dissipar Magia** / **Abolir Doença**.
+   - Quando um mob virar em você em grupo: conferir recomendação de **Desvanecer (Fade)**.
+7. **[ ] Sem erros de Taint em combate (`ADDON_ACTION_BLOCKED`)**
+   - Clicar normalmente nos retratos dos aliados durante o combate enquanto o contorno do CFA estiver brilhando sobre eles.
+   - Esperado: clique funciona perfeitamente (overlay tem `EnableMouse(false)` e parent `UIParent`) e nenhum erro de interface bloqueada aparece.
+8. **[ ] Checkbox de mensagens de boas-vindas no menu Geral (`/cfa`)**
+   - Abrir `/cfa` -> aba **Geral** -> desmarcar **Exibir mensagens de boas-vindas no chat ao entrar** e dar `/reload`.
+   - Esperado: nenhuma mensagem de boas-vindas do CFA aparece no chat. Marcar novamente e dar `/reload` -> as mensagens voltam normalmente.
+
+### Se algo não funcionar como esperado
+- Em grupo ou solo (modo *Sempre Healer*), rode `/cfa heal` e `/cfa priest` e cole a saída aqui (principalmente as linhas `ui=[...]` e `hp=...(ok=...)` para confirmarmos os nomes exatos dos frames de grupo/raide no seu layout e se a vida dos aliados é legível em combate no Forever).
