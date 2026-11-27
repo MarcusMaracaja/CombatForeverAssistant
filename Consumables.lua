@@ -286,6 +286,16 @@ local function checkEatingDrinking(aurasByID, aurasByName)
     return eating, drinking
 end
 
+function Consumables.IsEatingOrDrinking()
+    local okC, inComb = safeCall(UnitAffectingCombat, "player")
+    if okC and not isSecret(inComb) and inComb == true then return false end
+    local okL, locked = safeCall(InCombatLockdown)
+    if okL and not isSecret(locked) and locked == true then return false end
+    local aurasByID, aurasByName = collectPlayerAuras()
+    local eating, drinking = checkEatingDrinking(aurasByID, aurasByName)
+    return (eating or drinking) and true or false
+end
+
 -- ---------------------------------------------------------------------------
 -- Curated database of WoW Vanilla / Forever long-duration (5+ min) bonus items
 -- (Flasks, Elixirs, Scrolls). Custom Forever items are also detected dynamically

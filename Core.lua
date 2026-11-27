@@ -369,6 +369,15 @@ frame:SetScript("OnUpdate", function(_, delta)
             if addon.db.keyButtonAlways then addon.KeyButton.ShowPlaceholder() else addon.KeyButton.Hide() end
         end
     end
+    -- Não recomendar nada enquanto o jogador estiver comendo ou bebendo (fora de combate),
+    -- para não interromper a alimentação com aspectos, buffs, habilidades ou itens.
+    if addon.Consumables and type(addon.Consumables.IsEatingOrDrinking) == "function" then
+        local okED, eatingOrDrinking = pcall(addon.Consumables.IsEatingOrDrinking)
+        if okED and eatingOrDrinking then
+            clearPlayerSuggestions()
+            return
+        end
+    end
     if not mod or not mod.GetSuggestion then
         updateSuggestionDisplay(nil, mod)
         return
