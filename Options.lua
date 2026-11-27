@@ -369,7 +369,7 @@ function Options.CreateInfoButton(parent, getHelpFn)
         self.txt:SetTextColor(1, 0.9, 0.4, 1)
         if GameTooltip then
             GameTooltip:SetOwner(self, "ANCHOR_TOP")
-            GameTooltip:SetText(L["info_btn_tooltip"] or "Clique para ver para que serve esta aba", 1, 1, 1, true)
+            GameTooltip:SetText(L["info_btn_tooltip"] or "Clique para ver para que serve esta aba", 1, 1, 1, 1, true)
             GameTooltip:Show()
         end
     end)
