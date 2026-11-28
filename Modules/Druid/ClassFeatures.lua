@@ -323,15 +323,16 @@ P["bear_needs_enrage"] = {
     end,
 }
 P["bear_needs_taunt"] = {
-    label = LBL("Urso: alvo atacando aliado", "Bear: target attacking ally"),
+    label = LBL("Urso: perdeu aggro (alvo atacando aliado)", "Bear: lost aggro (target attacking ally)"),
     fn = function(env)
-        return inBearEnemy(env) and env.inCombat and env.hasTargetTarget
-            and not env.targetTargetIsPlayer
+        return inBearEnemy(env) and env.inCombat and env.lostAggro == true
     end,
 }
 P["bear_needs_bash"] = {
     label = LBL("Urso: alvo conjurando (interromper)", "Bear: target casting (interrupt)"),
-    fn = function(env) return inBearEnemy(env) and env.inCombat and env.targetInterruptible end,
+    fn = function(env)
+        return inBearEnemy(env) and env.inCombat and env.targetInterruptible and env.isMelee ~= false
+    end,
 }
 P["bear_needs_faerie_fire"] = {
     label = LBL("Urso: sem Fogo Feérico (Feral)", "Bear: Feral Faerie Fire missing"),

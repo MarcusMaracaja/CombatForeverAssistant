@@ -155,11 +155,236 @@ end
 
 function addon.IsTargetInterruptibleCasting(unit)
     unit = unit or "target"
-    if type(UnitCastingInfo) ~= "function" then return false end
-    local ok, name, _, _, _, _, canInterrupt = pcall(UnitCastingInfo, unit)
-    if not ok or not name then return false end
-    if _G.issecretvalue and issecretvalue(canInterrupt) then return false end
-    return canInterrupt and true or false
+    if not UnitExists(unit) then return false end
+
+    -- 1) Regular casts: name, text, texture, startMS, endMS, isTradeSkill, castID, notInterruptible, spellId
+    if type(UnitCastingInfo) == "function" then
+        local ok, name, _, _, startMS, endMS, _, _, notInterruptible = pcall(UnitCastingInfo, unit)
+        if ok and (name ~= nil or (startMS ~= nil and endMS ~= nil)) then
+            local immune = addon.SafeBoolean(notInterruptible, nil)
+            if immune == true then return false end
+            return true
+        end
+    end
+
+    -- 2) Channeled casts: name, text, texture, startMS, endMS, isTradeSkill, notInterruptible, spellId
+    if type(UnitChannelInfo) == "function" then
+        local ok, name, _, _, startMS, endMS, _, notInterruptible = pcall(UnitChannelInfo, unit)
+        if ok and (name ~= nil or (startMS ~= nil and endMS ~= nil)) then
+            local immune = addon.SafeBoolean(notInterruptible, nil)
+            if immune == true then return false end
+            return true
+        end
+    end
+
+    return false
+end
+
+-- ---------------------------------------------------------------------------
+-- Global Tank Aggro / Taunt helper (fail-SAFE: returns true ONLY when there
+-- is positive, non-secret evidence that the player does NOT have aggro).
+-- Works across all tank specs (Druid Bear, Warrior Protection, future tanks).
+-- ---------------------------------------------------------------------------
+function addon.PlayerLostAggro(unit)
+    unit = unit or "target"
+    if not UnitExists(unit) then return false end
+
+    -- 1) Native threat API: 0=no threat, 1=high threat (not tanking),
+    --    2=tanking (losing threat), 3=securely tanking.
+    if type(UnitThreatSituation) == "function" then
+        local ok, rawStatus = pcall(UnitThreatSituation, "player", unit)
+        local status = ok and addon.SafeNumber(rawStatus, nil) or nil
+        if status ~= nil then
+            if status >= 2 then
+                return false -- Player IS tanking this mob!
+            end
+            -- status 0 or 1: player does not have aggro; confirm mob is actually targeting someone
+            local tt = unit .. "target"
+            local okTT, ttExists = pcall(UnitExists, tt)
+            if okTT and addon.SafeBoolean(ttExists, false) then
+                return true
+            end
+            -- Even if targettarget is hidden, status == 1 means we have threat but someone else is tanking
+            return status == 1
+        end
+    end
+
+    -- 2) Fallback via targettarget — STRICT 3-state check (never fire on secret value!)
+    local tt = unit .. "target"
+    if type(UnitExists) ~= "function" or type(UnitIsUnit) ~= "function" then
+        return false
+    end
+    local okEx, exists = pcall(UnitExists, tt)
+    if not okEx or addon.SafeBoolean(exists, false) ~= true then
+        return false
+    end
+    local okSame, rawSame = pcall(UnitIsUnit, tt, "player")
+    if not okSame then return false end
+    local same = addon.SafeBoolean(rawSame, nil)
+    if same == nil then
+        return false -- Secret value: cannot prove we lost aggro -> do NOT taunt blindly
+    end
+    if same == true then
+        return false -- Target is already attacking the player
+    end
+    -- Target is attacking someone else; confirm it's an ally/friendly unit (not itself/neutral)
+    if type(UnitIsFriend) == "function" then
+        local okF, rawF = pcall(UnitIsFriend, "player", tt)
+        local isFriend = okF and addon.SafeBoolean(rawF, nil)
+        if isFriend == false then return false end
+    end
+    return true
+end
+
+-- ---------------------------------------------------------------------------
+-- Global AoE enemy counter (cached 0.25s, secret-safe, works for ALL classes).
+-- Combines:
+--   1) Visible enemy nameplates (C_NamePlate.GetNamePlates + nameplate1..40)
+--      that are in combat or within close range (~12 yd),
+--   2) Distinct enemy targets of party/raid/pet members (works even with
+--      nameplates turned OFF!),
+--   3) Optional MaxDps.SmartAoe() fallback if installed.
+-- ---------------------------------------------------------------------------
+local aoeCacheCount, aoeCacheAt, aoeCacheMelee = 0, 0, false
+
+local function unitInCombatSafe(unit)
+    if type(UnitAffectingCombat) ~= "function" then return nil end
+    local ok, v = pcall(UnitAffectingCombat, unit)
+    if not ok then return nil end
+    return addon.SafeBoolean(v, nil)
+end
+
+local function unitIsCloseEnough(unit, maxYards)
+    if type(UnitDistanceSquared) == "function" then
+        local ok, sq, checked = pcall(UnitDistanceSquared, unit)
+        if ok and checked == true then
+            local sqNum = addon.SafeNumber(sq, nil)
+            if sqNum ~= nil then
+                return sqNum <= (maxYards * maxYards)
+            end
+        end
+    end
+    if type(CheckInteractDistance) == "function" then
+        local ok, close = pcall(CheckInteractDistance, unit, 3) -- ~9.9 yd (duel range)
+        if ok and addon.SafeBoolean(close, false) == true then
+            return true
+        end
+    end
+    return nil
+end
+
+function addon.CountActiveEnemies(hasEnemy, opts)
+    local meleeOnly = type(opts) == "table" and opts.meleeOnly == true
+    local now = (type(GetTime) == "function") and GetTime() or 0
+    if (now - aoeCacheAt) < 0.25 and aoeCacheMelee == meleeOnly then
+        if hasEnemy and aoeCacheCount < 1 then return 1 end
+        return aoeCacheCount
+    end
+
+    local countedUnits = {}
+    local seenGUIDs = {}
+    local count = 0
+
+    local function isAlreadyCounted(unit)
+        if type(UnitGUID) == "function" then
+            local ok, g = pcall(UnitGUID, unit)
+            local guid = ok and addon.SafeString(g, nil) or nil
+            if guid then
+                if seenGUIDs[guid] then return true end
+                seenGUIDs[guid] = true
+                return false
+            end
+        end
+        if type(UnitIsUnit) == "function" then
+            for i = 1, #countedUnits do
+                local ok, same = pcall(UnitIsUnit, unit, countedUnits[i])
+                if ok and addon.SafeBoolean(same, false) == true then
+                    return true
+                end
+            end
+        end
+        return false
+    end
+
+    local function considerUnit(unit, forceActive)
+        if not unit or not UnitExists(unit) then return end
+        if not (addon.Enemy and addon:Enemy(unit)) then return end
+        if not forceActive then
+            local inC = unitInCombatSafe(unit)
+            local close = unitIsCloseEnough(unit, meleeOnly and 10 or 12)
+            if meleeOnly then
+                -- For melee/tanks: reject mobs confirmed far away (>10yd); accept if close or in combat
+                if close == false then return end
+                if close ~= true and inC ~= true then return end
+            else
+                if inC ~= true and close ~= true then return end
+            end
+        end
+        if not isAlreadyCounted(unit) then
+            countedUnits[#countedUnits + 1] = unit
+            count = count + 1
+        end
+    end
+
+    -- 0) Always count the player's current attackable target first
+    if hasEnemy then
+        considerUnit("target", true)
+    end
+
+    -- 1) Active enemy nameplates (C_NamePlate.GetNamePlates is the real WoW API)
+    local usedAPI = false
+    if C_NamePlate and type(C_NamePlate.GetNamePlates) == "function" then
+        local ok, plates = pcall(C_NamePlate.GetNamePlates, false)
+        if ok and type(plates) == "table" then
+            usedAPI = true
+            for i = 1, #plates do
+                local plate = plates[i]
+                local unit = plate and (plate.namePlateUnitToken
+                    or (plate.UnitFrame and plate.UnitFrame.unit))
+                if unit then
+                    considerUnit(unit, false)
+                end
+            end
+        end
+    end
+    if not usedAPI then
+        for i = 1, 40 do
+            local unit = "nameplate" .. i
+            if UnitExists(unit) then
+                considerUnit(unit, false)
+            end
+        end
+    end
+
+    -- 2) Group & pet targets (detects AoE even if nameplates are turned OFF!)
+    if UnitExists("pettarget") then
+        considerUnit("pettarget", false)
+    end
+    if type(IsInRaid) == "function" and IsInRaid() then
+        local n = (type(GetNumGroupMembers) == "function" and GetNumGroupMembers()) or 0
+        for i = 1, math.min(n, 40) do
+            local ut = "raid" .. i .. "target"
+            if UnitExists(ut) then considerUnit(ut, false) end
+        end
+    elseif type(IsInGroup) == "function" and IsInGroup() then
+        for i = 1, 4 do
+            local ut = "party" .. i .. "target"
+            if UnitExists(ut) then considerUnit(ut, false) end
+        end
+    end
+
+    -- 3) Optional MaxDps fallback if present
+    if _G.MaxDps and type(_G.MaxDps.SmartAoe) == "function" then
+        local ok, n = pcall(_G.MaxDps.SmartAoe)
+        local smartN = ok and addon.SafeNumber(n, nil) or nil
+        if smartN and smartN > count then count = smartN end
+    end
+
+    if hasEnemy and count < 1 then count = 1 end
+    aoeCacheCount = count
+    aoeCacheAt = now
+    aoeCacheMelee = meleeOnly
+    return count
 end
 
 -- ---------------------------------------------------------------------------

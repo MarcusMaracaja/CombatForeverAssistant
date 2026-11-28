@@ -492,10 +492,10 @@ P["war_last_stand"] = {
 }
 
 P["war_taunt"] = {
-    label = LBL("Provocar (alvo atacando aliado)", "Taunt (target attacking an ally)"),
+    label = LBL("Provocar (perdeu aggro / alvo atacando aliado)", "Taunt (lost aggro / target attacking an ally)"),
     fn = function(env)
         return env.hasActiveEnemy and env.inCombat and env.stance == "DEFENSIVE"
-            and env.hasTargetTarget and not env.targetTargetIsPlayer
+            and env.lostAggro == true
     end,
 }
 
@@ -512,7 +512,7 @@ P["war_shield_block"] = {
     fn = function(env)
         return env.hasActiveEnemy and env.inCombat and env.hasShield
             and env.stance == "DEFENSIVE" and not env.shieldBlockActive
-            and (not env.hasTargetTarget or env.targetTargetIsPlayer)
+            and not env.lostAggro
             and (addon.HasRage(10, 2565))
     end,
 }

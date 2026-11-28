@@ -148,18 +148,11 @@ local function chooseHealTarget()
     return "player", selfHP
 end
 
-local function countEnemies(hasEnemy)
-    local count = 0
-    if C_NamePlate and type(C_NamePlate.EnumerateUnits) == "function" then
-        local ok, units = pcall(function() return { C_NamePlate.EnumerateUnits() } end)
-        if ok and type(units) == "table" then
-            for _, unit in ipairs(units) do
-                if UnitExists(unit) and addon:Enemy(unit) then count = count + 1 end
-            end
-        end
+local function countEnemies(hasEnemy, isMeleeForm)
+    if type(addon.CountActiveEnemies) == "function" then
+        return addon.CountActiveEnemies(hasEnemy, isMeleeForm and { meleeOnly = true } or nil)
     end
-    if hasEnemy and count < 1 then return 1 end
-    return count
+    return hasEnemy and 1 or 0
 end
 
 function Druid:BuildEnv(specKey)
@@ -182,7 +175,7 @@ function Druid:BuildEnv(specKey)
         end
     end
 
-    local enemies = hasEnemy and countEnemies(hasEnemy) or 0
+    local enemies = hasEnemy and countEnemies(hasEnemy, isBear or isCat) or 0
     local combo = 0
     if isCat and hasEnemy then
         combo = readNum(GetComboPoints, "player", "target")
@@ -193,6 +186,7 @@ function Druid:BuildEnv(specKey)
 
     local inMelee = hasEnemy and (addon:IsInMeleeRange("target") == true) or false
     local targetCast = hasEnemy and addon.IsTargetInterruptibleCasting("target") or false
+    local lostAggro = hasEnemy and (addon.PlayerLostAggro and addon.PlayerLostAggro("target") or false) or false
 
     local env = {
         spec = specKey,
@@ -214,6 +208,7 @@ function Druid:BuildEnv(specKey)
         isAoE = enemies >= 2,
         targetCasting = targetCast,
         targetInterruptible = targetCast,
+        lostAggro = lostAggro,
         hasTargetTarget = hasEnemy and UnitExists("targettarget") and true or false,
         targetTargetIsPlayer = hasEnemy and UnitExists("targettarget") and addon.UnitIsSame("targettarget", "player") or false,
         healUnit = healUnit,

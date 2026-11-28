@@ -59,19 +59,10 @@ local function playerHealthPct()
 end
 
 local function countActiveEnemies(hasEnemy)
-    local count = 0
-    if C_NamePlate and type(C_NamePlate.EnumerateUnits) == "function" then
-        local ok, units = pcall(function() return { C_NamePlate.EnumerateUnits() } end)
-        if ok and type(units) == "table" then
-            for _, unit in ipairs(units) do
-                if addon.Enemy and addon:Enemy(unit) then
-                    count = count + 1
-                end
-            end
-        end
+    if type(addon.CountActiveEnemies) == "function" then
+        return addon.CountActiveEnemies(hasEnemy)
     end
-    if hasEnemy and count < 1 then return 1 end
-    return count
+    return hasEnemy and 1 or 0
 end
 
 -- ---------------------------------------------------------------------------

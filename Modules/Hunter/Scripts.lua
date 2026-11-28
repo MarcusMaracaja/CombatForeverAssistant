@@ -65,12 +65,11 @@ end)
 -- ---------------------------------------------------------------------------
 -- Env helpers
 -- ---------------------------------------------------------------------------
-local function countEnemiesInCombat()
-    if _G.MaxDps and type(_G.MaxDps.SmartAoe) == "function" then
-        local ok, n = pcall(_G.MaxDps.SmartAoe)
-        if ok and type(n) == "number" then return addon.SafeNumber(n, 0) or 0 end
+local function countEnemiesInCombat(hasEnemy)
+    if type(addon.CountActiveEnemies) == "function" then
+        return addon.CountActiveEnemies(hasEnemy)
     end
-    return 0
+    return hasEnemy and 1 or 0
 end
 
 local function safePct(cur, max)
@@ -145,7 +144,8 @@ function Hunter:BuildEnv()
     else
         env.manaPct = math.floor(env.manaPct + 0.5)
     end
-    env.targetCasting = isCastingSomething("target")
+    env.targetCasting = addon.IsTargetInterruptibleCasting and addon.IsTargetInterruptibleCasting("target")
+        or isCastingSomething("target")
     env.hasActiveEnemy = addon.UnitTargetExistsAndAttackable()
     env.isPvP = addon.IsPvPEnvironment()
     env.isMelee = false
@@ -199,7 +199,7 @@ function Hunter:BuildEnv()
     env.petAlive = (type(UnitExists) == "function" and UnitExists("pet")
         and not (UnitIsDeadOrGhost and UnitIsDeadOrGhost("pet"))) and true or false
     env.inCombat = combatOf("player")
-    env.isAoE = countEnemiesInCombat() >= 2
+    env.isAoE = countEnemiesInCombat(env.hasActiveEnemy) >= 2
     return env
 end
 

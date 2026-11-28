@@ -58,19 +58,10 @@ local function unitHealthPct(unit)
 end
 
 local function countActiveEnemies(hasEnemy)
-    local count = 0
-    if C_NamePlate and type(C_NamePlate.EnumerateUnits) == "function" then
-        local ok, units = pcall(function() return { C_NamePlate.EnumerateUnits() } end)
-        if ok and type(units) == "table" then
-            for _, unit in ipairs(units) do
-                if addon.Enemy and addon:Enemy(unit) then
-                    count = count + 1
-                end
-            end
-        end
+    if type(addon.CountActiveEnemies) == "function" then
+        return addon.CountActiveEnemies(hasEnemy, { meleeOnly = true })
     end
-    if hasEnemy and count < 1 then return 1 end
-    return count
+    return hasEnemy and 1 or 0
 end
 
 local function resolveMeleeRange(distance)
@@ -190,6 +181,7 @@ function Warrior:BuildEnv(specKey)
         hasTargetTarget = ok and not (addon.IsSecretValue and addon.IsSecretValue(ex)) and ex == true
     end
     local targetTargetIsPlayer = hasTargetTarget and (addon.UnitIsSame and addon.UnitIsSame("targettarget", "player")) or false
+    local lostAggro = hasEnemy and (addon.PlayerLostAggro and addon.PlayerLostAggro("target") or false) or false
 
     local env = {
         spec                  = specKey,
@@ -208,6 +200,7 @@ function Warrior:BuildEnv(specKey)
         isMoving              = playerMoving(),
         isAoE                 = enemies >= 2,
         enemies               = enemies,
+        lostAggro             = lostAggro,
         hasTargetTarget       = hasTargetTarget,
         targetTargetIsPlayer  = targetTargetIsPlayer,
         battleShoutActive     = Warrior.IsBuffActive(6673, "battle_shout", "BattleShout"),
