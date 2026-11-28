@@ -2028,7 +2028,24 @@ local function buildConsumablesTab(host)
         return slider
     end
 
-    local function makeThresholdRow(yPos, labelText, checked, threshold, onToggle, onThreshold)
+    local function areVitalsSecret()
+        local hpSecret = false
+        if type(UnitHealth) == "function" then
+            local ok, v = pcall(UnitHealth, "player")
+            hpSecret = (not ok) or isSecret(v)
+        end
+        local mpSecret = hpSecret
+        if Consumables.PlayerHasMana() and type(UnitPower) == "function" then
+            local ok, v = pcall(UnitPower, "player", 0)
+            mpSecret = (not ok) or isSecret(v)
+        end
+        return hpSecret, mpSecret
+    end
+
+    local hpSecret, mpSecret = areVitalsSecret()
+    local vitalsSecret = hpSecret and (not Consumables.PlayerHasMana() or mpSecret)
+
+    local function makeThresholdRow(yPos, labelText, checked, threshold, onToggle, onThreshold, hideSlider)
         local cb = CreateFrame("CheckButton", nil, parent, "UICheckButtonTemplate")
         cb:SetSize(22, 22)
         cb:SetPoint("TOPLEFT", parent, "TOPLEFT", 6, yPos)
@@ -2037,12 +2054,14 @@ local function buildConsumablesTab(host)
 
         local lbl = parent:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
         lbl:SetPoint("LEFT", cb, "RIGHT", 4, 0)
-        lbl:SetWidth(150)
+        lbl:SetWidth(hideSlider and 260 or 150)
         lbl:SetJustifyH("LEFT")
         lbl:SetText(labelText)
 
-        makeCompactSlider(lbl, 5, 95, threshold or 50, onThreshold)
-        return yPos - 28
+        if not hideSlider then
+            makeCompactSlider(lbl, 5, 95, threshold or 50, onThreshold)
+        end
+        return yPos - 26
     end
 
     local y = -8
@@ -2052,47 +2071,58 @@ local function buildConsumablesTab(host)
     y = makeThresholdRow(y, loc("cons_food_enable", "Recomendar Comida (Vida)"),
         cfg.foodEnabled, cfg.foodThreshold,
         function(v) cfg.foodEnabled = v end,
-        function(v) cfg.foodThreshold = v end)
+        function(v) cfg.foodThreshold = v end,
+        hpSecret)
 
     if Consumables.PlayerHasMana() then
         y = makeThresholdRow(y, loc("cons_drink_enable", "Recomendar Água (Mana)"),
             cfg.drinkEnabled, cfg.drinkThreshold,
             function(v) cfg.drinkEnabled = v end,
-            function(v) cfg.drinkThreshold = v end)
+            function(v) cfg.drinkThreshold = v end,
+            mpSecret)
     end
 
     local fdHint = parent:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
     fdHint:SetPoint("TOPLEFT", parent, "TOPLEFT", 8, y)
-    fdHint:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -8, y)
+    fdHint:SetPoint("RIGHT", parent, "RIGHT", -16, 0)
     fdHint:SetJustifyH("LEFT")
     fdHint:SetWordWrap(true)
-    fdHint:SetText(loc("cons_food_drink_hint",
-        "Bolsa aberta: destaca o melhor item usável na bolsa (e na barra se estiver nela). Bolsa fechada: destaca na barra. Comida e água podem brilhar juntas e param ao comer/beber."))
-    y = y - 34
+    fdHint:SetText(vitalsSecret
+        and loc("cons_food_drink_hint_secret",
+            "Acende a melhor comida/água após o combate (20s) e ao abrir a bolsa parado. Para imediatamente ao comer, beber ou se mover.")
+        or loc("cons_food_drink_hint",
+            "Bolsa aberta: destaca o melhor item usável na bolsa (e na barra se estiver nela). Bolsa fechada: destaca na barra."))
+    y = y - 38
 
-    -- Section 2: Combat Potions (Healing / Healthstone & Mana) — automatic best-item ranking
-    y = makeHeader(y, loc("cons_section_combat_pots", "Poções de Combate (em combate — escolhe a melhor)"))
+    -- Section 2: Combat Potions (Healing / Healthstone & Mana) — hidden when HP/Mana are secret values
+    if not vitalsSecret then
+        y = makeHeader(y, loc("cons_section_combat_pots", "Poções de Combate (em combate — escolhe a melhor)"))
 
-    y = makeThresholdRow(y, loc("cons_heal_pot_enable", "Recomendar Poção de Vida"),
-        cfg.healPotEnabled, cfg.healPotThreshold,
-        function(v) cfg.healPotEnabled = v end,
-        function(v) cfg.healPotThreshold = v end)
+        if not hpSecret then
+            y = makeThresholdRow(y, loc("cons_heal_pot_enable", "Recomendar Poção de Vida"),
+                cfg.healPotEnabled, cfg.healPotThreshold,
+                function(v) cfg.healPotEnabled = v end,
+                function(v) cfg.healPotThreshold = v end,
+                false)
+        end
 
-    if Consumables.PlayerHasMana() then
-        y = makeThresholdRow(y, loc("cons_mana_pot_enable", "Recomendar Poção de Mana"),
-            cfg.manaPotEnabled, cfg.manaPotThreshold,
-            function(v) cfg.manaPotEnabled = v end,
-            function(v) cfg.manaPotThreshold = v end)
+        if Consumables.PlayerHasMana() and not mpSecret then
+            y = makeThresholdRow(y, loc("cons_mana_pot_enable", "Recomendar Poção de Mana"),
+                cfg.manaPotEnabled, cfg.manaPotThreshold,
+                function(v) cfg.manaPotEnabled = v end,
+                function(v) cfg.manaPotThreshold = v end,
+                false)
+        end
+
+        local cpHint = parent:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
+        cpHint:SetPoint("TOPLEFT", parent, "TOPLEFT", 8, y)
+        cpHint:SetPoint("RIGHT", parent, "RIGHT", -16, 0)
+        cpHint:SetJustifyH("LEFT")
+        cpHint:SetWordWrap(true)
+        cpHint:SetText(loc("cons_combat_pots_hint",
+            "Em combate, destaca automaticamente a poção de vida/mana (ou pedra de vida) mais valiosa da bolsa/barra quando cair abaixo do % escolhido."))
+        y = y - 34
     end
-
-    local cpHint = parent:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    cpHint:SetPoint("TOPLEFT", parent, "TOPLEFT", 8, y)
-    cpHint:SetPoint("TOPRIGHT", parent, "TOPRIGHT", -8, y)
-    cpHint:SetJustifyH("LEFT")
-    cpHint:SetWordWrap(true)
-    cpHint:SetText(loc("cons_combat_pots_hint",
-        "Em combate, destaca automaticamente a poção de vida/mana (ou pedra de vida) mais valiosa da bolsa/barra quando cair abaixo do % escolhido."))
-    y = y - 30
 
     -- Section 3: Long-duration (5+ min) bonus potions, elixirs and scrolls
     y = makeHeader(y, loc("cons_section_bonus", "Poções de bônus e pergaminhos (5+ min)"))
