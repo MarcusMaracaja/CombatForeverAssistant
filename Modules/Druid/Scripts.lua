@@ -12,6 +12,8 @@ local L = addon.L
 local EXTRA_KEYS = { mark = true, thorns = true, aquatic = true }
 local lastLandForm = nil
 local preAquaticForm = nil
+local restoreAfterWaterUntil = 0
+local wasInAquaticForm = false
 
 -- ---------------------------------------------------------------------------
 -- Event tracker (beliefs & talent cache invalidation)
@@ -31,6 +33,8 @@ tracker:SetScript("OnEvent", function(_, event, ...)
     elseif event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_DEAD" then
         Druid.ClearAllBeliefs()
         preAquaticForm = nil
+        wasInAquaticForm = false
+        restoreAfterWaterUntil = 0
         addon:InvalidateSpecTalentCache("DRUID")
     elseif event == "SPELLS_CHANGED" or event == "PLAYER_TALENT_UPDATE"
         or event == "TRAIT_CONFIG_UPDATED" then
@@ -38,6 +42,15 @@ tracker:SetScript("OnEvent", function(_, event, ...)
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         local unit, _, spellID = ...
         if unit == "player" then
+            local sid = addon.SafeNumber(spellID, nil)
+            if sid == 1066 then
+                wasInAquaticForm = true
+            elseif sid == 5487 or sid == 9634 or sid == 768 or sid == 24858 or sid == 24907 then
+                -- Player manually shifted into a land form: restore is complete
+                wasInAquaticForm = false
+                preAquaticForm = nil
+                restoreAfterWaterUntil = 0
+            end
             pcall(Druid.RegisterCast, spellID)
         end
     end
@@ -323,21 +336,19 @@ local function aquaticFormSuggestion(env)
     if not Druid:IsExtraSuggestionEnabled("aquatic") then return nil end
     local swimming = playerIsSwimming()
     local form = env.form
+    local now = (type(GetTime) == "function" and addon.SafeNumber(GetTime(), 0)) or 0
 
-    -- Track the last non-aquatic form while on land
-    if not swimming and form ~= "AQUATIC" then
-        if form == "BEAR" or form == "CAT" or form == "MOONKIN" or form == "HUMANOID" then
-            lastLandForm = form
+    if form == "AQUATIC" then
+        wasInAquaticForm = true
+        if preAquaticForm == nil then
+            preAquaticForm = lastLandForm
         end
-        preAquaticForm = nil
-        return nil
     end
 
-    -- Never suggest Aquatic Form / land-form switch while in combat
-    if env.inCombat then return nil end
-
-    -- Swimming out of combat: suggest Aquatic Form (1066) and remember previous form
+    -- Swimming out of combat: suggest Aquatic Form (1066) and remember previous land form
     if swimming then
+        restoreAfterWaterUntil = 0
+        if env.inCombat then return nil end
         if form == "AQUATIC" then return nil end
         local aquaticID = addon.Compat and addon.Compat.HighestKnownSpellID
             and addon.Compat.HighestKnownSpellID(1066)
@@ -355,20 +366,60 @@ local function aquaticFormSuggestion(env)
         return nil
     end
 
-    -- Back on land while still in Aquatic Form: restore the previous form
-    if not swimming and form == "AQUATIC" then
-        local restoreID = formRestoreSpellID(preAquaticForm)
-        local knownID = (addon.Compat and addon.Compat.HighestKnownSpellID
-            and addon.Compat.HighestKnownSpellID(restoreID)) or restoreID
-        local name = knownID and addon.SpellName(knownID)
-        if knownID and name and addon.CheckCastable({
-                SpellID = knownID, SpellName = name, EnemyTargetNeeded = false,
-                Unit = "player", NoRangeCheck = true,
-            }) then
-            return { spellID = knownID, color = "Utility" }
+    -- On land: if we were in Aquatic Form (WoW auto-cancels Aquatic Form to HUMANOID on land!),
+    -- keep suggesting the previous land form (Bear / Cat / Moonkin) until restored or 15s pass.
+    if wasInAquaticForm then
+        if not preAquaticForm or preAquaticForm == "HUMANOID" then
+            if form == "AQUATIC" and not env.inCombat then
+                local name = addon.SpellName(1066)
+                if name and addon.CheckCastable({
+                        SpellID = 1066, SpellName = name, EnemyTargetNeeded = false,
+                        Unit = "player", NoRangeCheck = true,
+                    }) then
+                    return { spellID = 1066, color = "Utility" }
+                end
+            end
+            wasInAquaticForm = false
+            preAquaticForm = nil
+            restoreAfterWaterUntil = 0
+        elseif form == preAquaticForm then
+            -- Already back in the previous form!
+            wasInAquaticForm = false
+            preAquaticForm = nil
+            restoreAfterWaterUntil = 0
+            lastLandForm = form
+            return nil
+        else
+            if restoreAfterWaterUntil == 0 then
+                restoreAfterWaterUntil = now + 15
+            end
+            if now < restoreAfterWaterUntil then
+                if env.inCombat then return nil end
+                local restoreID = formRestoreSpellID(preAquaticForm)
+                local knownID = (addon.Compat and addon.Compat.HighestKnownSpellID
+                    and addon.Compat.HighestKnownSpellID(restoreID)) or restoreID
+                local name = knownID and addon.SpellName(knownID)
+                if knownID and name and addon.CheckCastable({
+                        SpellID = knownID, SpellName = name, EnemyTargetNeeded = false,
+                        Unit = "player", NoRangeCheck = true,
+                    }) then
+                    return { spellID = knownID, color = "Utility" }
+                end
+                return nil
+            else
+                -- Timed out (player chose to stay in Humanoid): clear restore state
+                wasInAquaticForm = false
+                preAquaticForm = nil
+                restoreAfterWaterUntil = 0
+            end
         end
     end
 
+    -- Normal land tracking: remember the player's current land form
+    if form == "BEAR" or form == "CAT" or form == "MOONKIN" or form == "HUMANOID" then
+        lastLandForm = form
+    end
+    preAquaticForm = nil
     return nil
 end
 
