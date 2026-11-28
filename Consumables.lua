@@ -266,7 +266,20 @@ local function nameLooksLikeDrink(foldedName)
         or foldedName:find("refreshment", 1, true) ~= nil
 end
 
+local auraCacheByID, auraCacheByName, auraCacheReadable
+local auraCacheTime = 0
+
+local function invalidateAuraCache()
+    auraCacheByID = nil
+    auraCacheByName = nil
+    auraCacheTime = 0
+end
+
 local function collectPlayerAuras()
+    local t = now()
+    if auraCacheByID and (t - auraCacheTime) < 1.0 then
+        return auraCacheByID, auraCacheByName, auraCacheReadable
+    end
     local byID, byName = {}, {}
     local readable = false
     if C_UnitAuras and type(C_UnitAuras.GetAuraDataByIndex) == "function" then
@@ -274,11 +287,9 @@ local function collectPlayerAuras()
             local ok, aura = pcall(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
             if not ok or type(aura) ~= "table" then break end
             readable = true
-            local okID, sid = pcall(function() return aura.spellId or aura.spellID end)
-            sid = okID and safeNum(sid, nil) or nil
+            local sid = safeNum(aura.spellId or aura.spellID, nil)
             if sid then byID[sid] = true end
-            local okN, nm = pcall(function() return aura.name end)
-            nm = okN and safeStr(nm) or nil
+            local nm = safeStr(aura.name)
             if nm then byName[normalizeText(nm)] = true end
         end
     elseif type(UnitBuff) == "function" then
@@ -292,6 +303,10 @@ local function collectPlayerAuras()
             if nm then byName[normalizeText(nm)] = true end
         end
     end
+    auraCacheByID = byID
+    auraCacheByName = byName
+    auraCacheReadable = readable
+    auraCacheTime = t
     return byID, byName, readable
 end
 
@@ -1099,7 +1114,9 @@ local bagScanTime = 0
 
 local function scanOwnedBagItems(force)
     local t = now()
-    if not force and bagScanCache and (t - bagScanTime) < 0.8 then
+    -- Cache invalidated immediately by BAG_UPDATE_DELAYED / ACTIONBAR_SLOT_CHANGED;
+    -- 30s safety TTL avoids re-scanning 100+ bag slots every 0.8s.
+    if not force and bagScanCache and (t - bagScanTime) < 30 then
         return bagScanCache
     end
     local items = {} -- [itemID] = { itemID, bag, slot, onBar, meta }
@@ -1434,6 +1451,12 @@ end
 function Consumables.GetSuggestions()
     local cfg = getConfig(false)
     if not cfg then return {} end
+    if not cfg.foodEnabled and not cfg.drinkEnabled
+        and not cfg.healPotEnabled and not cfg.manaPotEnabled
+        and not cfg.bonusEnabled
+        and (type(cfg.customRules) ~= "table" or #cfg.customRules == 0) then
+        return {}
+    end
 
     local env = buildConsumableEnv()
     local owned = scanOwnedBagItems(false)
@@ -1571,14 +1594,19 @@ tracker:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
 tracker:RegisterEvent("PLAYER_ENTERING_WORLD")
 tracker:RegisterEvent("PLAYER_DEAD")
 tracker:RegisterEvent("PLAYER_REGEN_DISABLED")
+tracker:RegisterUnitEvent("UNIT_AURA", "player")
 tracker:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
 tracker:RegisterUnitEvent("UNIT_SPELLCAST_SENT", "player")
 
 tracker:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4)
-    if event == "BAG_UPDATE_DELAYED" or event == "ACTIONBAR_SLOT_CHANGED" then
+    if event == "UNIT_AURA" then
+        invalidateAuraCache()
+        return
+    elseif event == "BAG_UPDATE_DELAYED" or event == "ACTIONBAR_SLOT_CHANGED" then
         bagScanCache = nil
     elseif event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_DEAD" then
         bagScanCache = nil
+        invalidateAuraCache()
         state.eatingBeliefUntil = 0
         state.drinkingBeliefUntil = 0
         wipe(state.usedItemUntil)
@@ -1586,6 +1614,7 @@ tracker:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4)
         wipe(state.lastCastByID)
         wipe(state.lastCastByName)
     elseif event == "PLAYER_REGEN_DISABLED" then
+        invalidateAuraCache()
         state.eatingBeliefUntil = 0
         state.drinkingBeliefUntil = 0
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" or event == "UNIT_SPELLCAST_SENT" then

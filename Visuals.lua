@@ -425,37 +425,48 @@ function Visuals.FindUnitFrames(unit)
         consider(_G["CompactPartyFrameMember" .. i])
     end
 
-    -- 4) Blizzard CompactRaidFrames (flat 1..40 and grouped 1..8 x 1..5)
-    for i = 1, 40 do
-        consider(_G["CompactRaidFrame" .. i])
-    end
-    for g = 1, 8 do
-        for m = 1, 5 do
-            consider(_G["CompactRaidGroup" .. g .. "Member" .. m])
+    -- 4) Blizzard CompactRaidFrames (only scan when actually in a raid)
+    local inRaid = type(IsInRaid) == "function" and IsInRaid()
+    if inRaid then
+        for i = 1, 40 do
+            consider(_G["CompactRaidFrame" .. i])
         end
-    end
-
-    -- 5) ElvUI Party & Raid frames
-    for m = 1, 5 do
-        consider(_G["ElvUF_PartyGroup1UnitButton" .. m])
-    end
-    local elvPrefixes = { "ElvUF_Raid1Group", "ElvUF_Raid2Group", "ElvUF_Raid3Group", "ElvUF_RaidGroup", "ElvUF_Raid40Group" }
-    for _, pref in ipairs(elvPrefixes) do
         for g = 1, 8 do
             for m = 1, 5 do
-                consider(_G[pref .. g .. "UnitButton" .. m])
+                consider(_G["CompactRaidGroup" .. g .. "Member" .. m])
             end
         end
     end
 
-    -- 6) Cell / Grid2 / VuhDo popular healer raid frames
-    for m = 1, 5 do
-        consider(_G["CellPartyFrameMember" .. m])
+    -- 5) ElvUI Party & Raid frames (only if ElvUI is loaded)
+    if _G.ElvUI then
+        for m = 1, 5 do
+            consider(_G["ElvUF_PartyGroup1UnitButton" .. m])
+        end
+        if inRaid then
+            local elvPrefixes = { "ElvUF_Raid1Group", "ElvUF_Raid2Group", "ElvUF_Raid3Group", "ElvUF_RaidGroup", "ElvUF_Raid40Group" }
+            for _, pref in ipairs(elvPrefixes) do
+                for g = 1, 8 do
+                    for m = 1, 5 do
+                        consider(_G[pref .. g .. "UnitButton" .. m])
+                    end
+                end
+            end
+        end
     end
-    for i = 1, 40 do
-        consider(_G["CellRaidFrameHeader0UnitButton" .. i])
-        consider(_G["Grid2LayoutHeader1UnitButton" .. i])
-        consider(_G["Vd1H" .. i])
+
+    -- 6) Cell / Grid2 / VuhDo popular healer raid frames (only if addon is loaded)
+    if _G.Cell then
+        for m = 1, 5 do consider(_G["CellPartyFrameMember" .. m]) end
+        if inRaid then
+            for i = 1, 40 do consider(_G["CellRaidFrameHeader0UnitButton" .. i]) end
+        end
+    end
+    if _G.Grid2 and inRaid then
+        for i = 1, 40 do consider(_G["Grid2LayoutHeader1UnitButton" .. i]) end
+    end
+    if _G.VuhDo and inRaid then
+        for i = 1, 40 do consider(_G["Vd1H" .. i]) end
     end
 
     return out
