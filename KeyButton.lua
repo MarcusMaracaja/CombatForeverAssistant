@@ -11,6 +11,13 @@ local KeyButton = {}
 addon.KeyButton = KeyButton
 
 local frame
+local keyForSpellCache = {}
+local lastShownKeyText = nil
+local lastShownVisible = false
+
+function KeyButton.InvalidateCache()
+    wipe(keyForSpellCache)
+end
 
 local ACTION_BUTTONS = {
     { buttonPrefix = "ActionButton", bindingPrefix = "ACTIONBUTTON" },
@@ -36,12 +43,21 @@ local function bindingForButton(button)
 end
 
 local function findKeyForSpell(spellID)
+    if not spellID then return nil end
+    local cached = keyForSpellCache[spellID]
+    if cached ~= nil then
+        return cached ~= false and cached or nil
+    end
     if addon.Visuals and type(addon.Visuals.FindButtons) == "function" then
         for _, button in ipairs(addon.Visuals.FindButtons(spellID)) do
             local key = bindingForButton(button)
-            if key then return key end
+            if key then
+                keyForSpellCache[spellID] = key
+                return key
+            end
         end
     end
+    keyForSpellCache[spellID] = false
     return nil
 end
 
@@ -126,20 +142,10 @@ function KeyButton.ResetAll()
     KeyButton.ApplyLock()
 end
 
-local function manualDragStart(self)
-    if addon.db.keyButtonLocked then return end
-    local mx, my = GetCursorPosition()
-    local scale = self:GetEffectiveScale()
-    local cx, cy = self:GetCenter()
-    self.isDown = true
-    self.dragDX = cx - mx / scale
-    self.dragDY = cy - my / scale
-end
-
 local function manualDragUpdate(self)
-    if not self.isDown then return end
-    if not IsMouseButtonDown("LeftButton") then
+    if not self.isDown or not IsMouseButtonDown("LeftButton") then
         self.isDown = false
+        self:SetScript("OnUpdate", nil)
         return
     end
     local mx, my = GetCursorPosition()
@@ -150,6 +156,17 @@ local function manualDragUpdate(self)
     self:ClearAllPoints()
     self:SetPoint("CENTER", UIParent, "CENTER", nx, ny)
     addon.charDb.keyX, addon.charDb.keyY = nx, ny
+end
+
+local function manualDragStart(self)
+    if addon.db.keyButtonLocked then return end
+    local mx, my = GetCursorPosition()
+    local scale = self:GetEffectiveScale()
+    local cx, cy = self:GetCenter()
+    self.isDown = true
+    self.dragDX = cx - mx / scale
+    self.dragDY = cy - my / scale
+    self:SetScript("OnUpdate", manualDragUpdate)
 end
 
 local function createFrame()
@@ -177,8 +194,10 @@ local function createFrame()
     frame.text:SetText("")
 
     frame:SetScript("OnMouseDown", manualDragStart)
-    frame:SetScript("OnMouseUp", function(self) self.isDown = false end)
-    frame:SetScript("OnUpdate", manualDragUpdate)
+    frame:SetScript("OnMouseUp", function(self)
+        self.isDown = false
+        self:SetScript("OnUpdate", nil)
+    end)
 
     applySavedPosition(frame)
     KeyButton.ApplyLook()
@@ -190,6 +209,7 @@ function KeyButton.ApplyLock()
     if not frame then return end
     if addon.db.keyButtonLocked then
         frame.isDown = false
+        frame:SetScript("OnUpdate", nil)
         frame:EnableMouse(false) -- clicks pass through to whatever is behind
     else
         frame:EnableMouse(true)
@@ -198,9 +218,13 @@ end
 
 function KeyButton.ShowPlaceholder()
     if not frame then createFrame() end
-    frame.text:SetText("?")
-    frame:Show()
-    KeyButton.ApplyLock()
+    if not lastShownVisible or lastShownKeyText ~= "?" then
+        frame.text:SetText("?")
+        frame:Show()
+        lastShownKeyText = "?"
+        lastShownVisible = true
+        KeyButton.ApplyLock()
+    end
     return true
 end
 
@@ -216,12 +240,21 @@ function KeyButton.ShowFor(spellID, cooldownChecked)
         return false
     end
     if not frame then createFrame() end
-    frame.text:SetText(ShortenKey(key))
-    frame:Show()
-    KeyButton.ApplyLock()
+    local short = ShortenKey(key)
+    if not lastShownVisible or lastShownKeyText ~= short then
+        frame.text:SetText(short)
+        frame:Show()
+        lastShownKeyText = short
+        lastShownVisible = true
+        KeyButton.ApplyLock()
+    end
     return true
 end
 
 function KeyButton.Hide()
-    if frame then frame:Hide() end
+    if frame and lastShownVisible then
+        frame:Hide()
+        lastShownVisible = false
+        lastShownKeyText = nil
+    end
 end

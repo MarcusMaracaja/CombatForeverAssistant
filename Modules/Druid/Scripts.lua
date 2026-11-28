@@ -165,20 +165,34 @@ end
 function Druid:BuildEnv(specKey)
     local hasEnemy = addon.UnitTargetExistsAndAttackable()
     local form = Druid.ActiveForm()
-    local healUnit, healHealth = chooseHealTarget()
-    local enemies = countEnemies(hasEnemy)
-    local combo = readNum(GetComboPoints, "player", "target")
-    if combo == nil then combo = readNum(GetComboPoints, "player") end
-    if combo == nil then combo = readNum(UnitPower, "player", 4) end
+    local isCat = form == "CAT"
+    local isBear = form == "BEAR"
+    local isCaster = not isCat and not isBear
 
-    local rejuvName = addon.SpellName(774)
-    local regrowthName = addon.SpellName(8936)
+    local healUnit, healHealth = "player", nil
     local hasHoT = false
-    if healUnit and addon.Compat and addon.Compat.CheckBuff then
-        hasHoT = (rejuvName and addon.Compat.CheckBuff(rejuvName, healUnit))
-            or (regrowthName and addon.Compat.CheckBuff(regrowthName, healUnit))
-            or false
+    if specKey == "REST" then
+        healUnit, healHealth = chooseHealTarget()
+        local rejuvName = addon.SpellName(774)
+        local regrowthName = addon.SpellName(8936)
+        if healUnit and addon.Compat and addon.Compat.CheckBuff then
+            hasHoT = (rejuvName and addon.Compat.CheckBuff(rejuvName, healUnit))
+                or (regrowthName and addon.Compat.CheckBuff(regrowthName, healUnit))
+                or false
+        end
     end
+
+    local enemies = hasEnemy and countEnemies(hasEnemy) or 0
+    local combo = 0
+    if isCat and hasEnemy then
+        combo = readNum(GetComboPoints, "player", "target")
+        if combo == nil then combo = readNum(GetComboPoints, "player") end
+        if combo == nil then combo = readNum(UnitPower, "player", 4) end
+        combo = combo or 0
+    end
+
+    local inMelee = hasEnemy and (addon:IsInMeleeRange("target") == true) or false
+    local targetCast = hasEnemy and addon.IsTargetInterruptibleCasting("target") or false
 
     local env = {
         spec = specKey,
@@ -187,39 +201,39 @@ function Druid:BuildEnv(specKey)
         targetHP = hasEnemy and healthPct("target") or nil,
         manaPct = powerPct("player", 0),
         hasMana = (readNum(UnitPowerMax, "player", 0) or 0) > 0,
-        rage = readNum(UnitPower, "player", 1),
-        energy = readNum(UnitPower, "player", 3),
-        combo = combo or 0,
+        rage = isBear and readNum(UnitPower, "player", 1) or nil,
+        energy = isCat and readNum(UnitPower, "player", 3) or nil,
+        combo = isCat and (combo or 0) or 0,
         hasActiveEnemy = hasEnemy,
         inCombat = inCombat("player"),
         isPvP = addon.IsPvPEnvironment(),
-        targetDistance = addon:TargetDistance("target"),
-        isMelee = addon:IsInMeleeRange("target") == true,
-        tooCloseForRanged = addon:IsInMeleeRange("target") == true,
+        targetDistance = hasEnemy and addon:TargetDistance("target") or nil,
+        isMelee = inMelee,
+        tooCloseForRanged = inMelee,
         enemyCount = enemies,
         isAoE = enemies >= 2,
-        targetCasting = hasEnemy and addon.IsTargetInterruptibleCasting("target") or false,
-        targetInterruptible = hasEnemy and addon.IsTargetInterruptibleCasting("target") or false,
-        hasTargetTarget = UnitExists("targettarget") and true or false,
-        targetTargetIsPlayer = UnitExists("targettarget") and addon.UnitIsSame("targettarget", "player") or false,
+        targetCasting = targetCast,
+        targetInterruptible = targetCast,
+        hasTargetTarget = hasEnemy and UnitExists("targettarget") and true or false,
+        targetTargetIsPlayer = hasEnemy and UnitExists("targettarget") and addon.UnitIsSame("targettarget", "player") or false,
         healUnit = healUnit,
         healHealth = healHealth,
         emergencyHealing = specKey == "REST" and healHealth ~= nil and healHealth <= 35,
         hasHoT = hasHoT,
 
-        -- Debuffs (API + slot belief)
-        targetDebuffRake = hasEnemy and Druid.IsTargetDebuffActive(1822, "rake", true) or false,
-        targetDebuffRip = hasEnemy and Druid.IsTargetDebuffActive(1079, "rip", true) or false,
-        targetDebuffMoonfire = hasEnemy and Druid.IsTargetDebuffActive(8921, "moonfire", true) or false,
-        targetDebuffInsectSwarm = hasEnemy and Druid.IsTargetDebuffActive(5570, "insect_swarm", true) or false,
-        targetDebuffFaerieFire = hasEnemy and Druid.IsTargetDebuffActive(770, "faerie_fire", false) or false,
-        targetDebuffFaerieFireFeral = hasEnemy and Druid.IsTargetDebuffActive(16857, "faerie_fire_feral", false) or false,
-        targetDebuffMangleCat = hasEnemy and Druid.IsTargetDebuffActive(33876, "mangle_cat", false) or false,
-        targetDebuffMangleBear = hasEnemy and Druid.IsTargetDebuffActive(33878, "mangle_bear", false) or false,
-        targetDebuffDemoralizingRoar = hasEnemy and Druid.IsTargetDebuffActive(99, "demoralizing_roar", false) or false,
+        -- Debuffs (API + slot belief) — only scan debuffs relevant to current form
+        targetDebuffRake = hasEnemy and isCat and Druid.IsTargetDebuffActive(1822, "rake", true) or false,
+        targetDebuffRip = hasEnemy and isCat and Druid.IsTargetDebuffActive(1079, "rip", true) or false,
+        targetDebuffMoonfire = hasEnemy and isCaster and Druid.IsTargetDebuffActive(8921, "moonfire", true) or false,
+        targetDebuffInsectSwarm = hasEnemy and isCaster and Druid.IsTargetDebuffActive(5570, "insect_swarm", true) or false,
+        targetDebuffFaerieFire = hasEnemy and isCaster and Druid.IsTargetDebuffActive(770, "faerie_fire", false) or false,
+        targetDebuffFaerieFireFeral = hasEnemy and (isCat or isBear) and Druid.IsTargetDebuffActive(16857, "faerie_fire_feral", false) or false,
+        targetDebuffMangleCat = hasEnemy and isCat and Druid.IsTargetDebuffActive(33876, "mangle_cat", false) or false,
+        targetDebuffMangleBear = hasEnemy and isBear and Druid.IsTargetDebuffActive(33878, "mangle_bear", false) or false,
+        targetDebuffDemoralizingRoar = hasEnemy and isBear and Druid.IsTargetDebuffActive(99, "demoralizing_roar", false) or false,
 
         -- Player combat buffs
-        tigerFuryActive = Druid.IsPlayerBuffActive(5217, "tiger_fury", "TigersFury"),
+        tigerFuryActive = isCat and Druid.IsPlayerBuffActive(5217, "tiger_fury", "TigersFury") or false,
         barkskinActive = Druid.IsPlayerBuffActive(22812, "barkskin", "Barkskin"),
     }
     return env

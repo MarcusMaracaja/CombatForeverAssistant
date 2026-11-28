@@ -1625,6 +1625,9 @@ tracker:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4)
         return
     elseif event == "BAG_UPDATE_DELAYED" or event == "ACTIONBAR_SLOT_CHANGED" then
         bagScanCache = nil
+        if event == "BAG_UPDATE_DELAYED" and addon.Visuals and type(addon.Visuals.InvalidateBagCache) == "function" then
+            addon.Visuals.InvalidateBagCache()
+        end
     elseif event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_DEAD" then
         bagScanCache = nil
         invalidateAuraCache()

@@ -128,7 +128,8 @@ end
 -- Event frame
 -- ---------------------------------------------------------------------------
 local frame = CreateFrame("Frame", "CombatForeverAssistantCore", UIParent)
-local TICK = 0.2
+local TICK_COMBAT = 0.20
+local TICK_IDLE = 0.35
 local elapsed = 0
 local lastErrorPrint = 0
 local playerUnavailable = false
@@ -345,7 +346,8 @@ end
 
 frame:SetScript("OnUpdate", function(_, delta)
     elapsed = elapsed + delta
-    if elapsed < TICK then return end
+    local tickInterval = (UnitAffectingCombat and UnitAffectingCombat("player")) and TICK_COMBAT or TICK_IDLE
+    if elapsed < tickInterval then return end
     elapsed = 0
     if not playerCanRun() then
         if not playerUnavailable then clearPlayerSuggestions() end
@@ -1688,7 +1690,6 @@ function addon:CheckIfSpellCastable(z)
         if ok then isUsable = not not a; notEnoughPower = not not b end
     end
 
-    local onCooldown, cooldown, duration = addon:IsSpellOnCooldown(knownID or spellID)
     local Aura = z.Debuff or z.Buff or z.MyDebuff or z.MyBuff
 
     -- Alcance: nil (desconhecido/segreto) não bloqueia — igual ao SFF (SpellInRange retorna 1 quando nil)
@@ -1738,11 +1739,8 @@ function addon:CheckIfSpellCastable(z)
         end
     end
 
+    -- enemyOk já foi validado acima (linha 1678); evita chamada duplicada a addon:Enemy
     local enemyOk = true
-    if z.EnemyTargetNeeded then
-        local e = addon.Enemy and addon:Enemy(z.Unit)
-        enemyOk = (e ~= false)
-    end
 
     local manaTargetOk = true
     if z.TargetThatUsesManaNeeded then

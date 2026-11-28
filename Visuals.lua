@@ -39,8 +39,14 @@ local BUTTON_PATTERNS = {
 }
 
 local buttonMap = {}
+local spellButtonMap
+local spellBaseButtonMap
 local itemButtonMap
+local bagButtonCache
+local bagButtonCacheAt = 0
 local highlighted = {}
+local buttonOverlayPool = {} -- [btn] = { [mode] = { frame=..., width=..., textures=... } }
+local unitOverlayPool = {}   -- [keyObj] = { [urgentKey] = { frame=..., textures=... } }
 local mapDirty = true
 local shownSignature
 
@@ -56,10 +62,9 @@ end
 
 local function slotSpellID(frameBtn)
     if frameBtn and type(frameBtn.GetAttribute) == "function" then
-        local ok, slot = pcall(function()
-            return tonumber(frameBtn:GetAttribute("action"))
-        end)
-        if ok and slot and slot > 0 then return slot end
+        local ok, raw = pcall(frameBtn.GetAttribute, frameBtn, "action")
+        local slot = ok and tonumber(raw) or nil
+        if slot and slot > 0 then return slot end
     end
     local name = frameBtn:GetName()
     local n = name and name:match("(%d+)$")
@@ -73,16 +78,28 @@ local function slotSpellID(frameBtn)
     return nil
 end
 
+function Visuals.InvalidateBagCache()
+    bagButtonCache = nil
+    bagButtonCacheAt = 0
+end
+
 function Visuals.RefreshMap()
     mapDirty = true
+    spellButtonMap = nil
+    spellBaseButtonMap = nil
     itemButtonMap = nil
     shownSignature = nil
+    if addon.KeyButton and type(addon.KeyButton.InvalidateCache) == "function" then
+        addon.KeyButton.InvalidateCache()
+    end
 end
 
 function Visuals.BuildMap()
     buttonMap = {}
     iterActionButtons(function(f) table.insert(buttonMap, f) end)
     mapDirty = false
+    spellButtonMap = nil
+    spellBaseButtonMap = nil
     itemButtonMap = nil
 end
 
@@ -135,30 +152,52 @@ local function spellMatches(barID, wantID)
     return barBase ~= nil and barBase == wantBase
 end
 
--- public: buttons on the action bars bound to this spell (id or family name)
-function Visuals.FindButtons(spellID)
+local function ensureActionMaps()
     ensureMap()
-    local out = {}
+    if spellButtonMap and itemButtonMap then return end
+    spellButtonMap = {}
+    spellBaseButtonMap = {}
+    itemButtonMap = {}
     for _, btn in ipairs(buttonMap) do
-        local barID = buttonSpellID(btn)
-        if spellMatches(barID, spellID) then out[#out + 1] = btn end
-    end
-    return out
-end
-
-function Visuals.FindItemButtons(itemID)
-    ensureMap()
-    if not itemButtonMap then
-        itemButtonMap = {}
-        for _, btn in ipairs(buttonMap) do
-            local id = buttonItemID(btn)
-            if id then
-                itemButtonMap[id] = itemButtonMap[id] or {}
-                table.insert(itemButtonMap[id], btn)
+        local actionType, id = buttonAction(btn)
+        if actionType == "spell" and id then
+            local list = spellButtonMap[id]
+            if not list then list = {}; spellButtonMap[id] = list end
+            list[#list + 1] = btn
+            local bName = spellBaseName(id)
+            if bName then
+                local bList = spellBaseButtonMap[bName]
+                if not bList then bList = {}; spellBaseButtonMap[bName] = bList end
+                bList[#bList + 1] = btn
+            end
+        elseif actionType == "item" then
+            local iid = actionItemID(id)
+            if iid then
+                local list = itemButtonMap[iid]
+                if not list then list = {}; itemButtonMap[iid] = list end
+                list[#list + 1] = btn
             end
         end
     end
-    return itemButtonMap[itemID] or {}
+end
+
+local EMPTY_LIST = {}
+
+-- public: buttons on the action bars bound to this spell (id or family name)
+function Visuals.FindButtons(spellID)
+    if not spellID then return EMPTY_LIST end
+    ensureActionMaps()
+    local byBase = spellBaseName(spellID)
+    if byBase and spellBaseButtonMap[byBase] then
+        return spellBaseButtonMap[byBase]
+    end
+    return spellButtonMap[spellID] or EMPTY_LIST
+end
+
+function Visuals.FindItemButtons(itemID)
+    if not itemID then return EMPTY_LIST end
+    ensureActionMaps()
+    return itemButtonMap[itemID] or EMPTY_LIST
 end
 
 local function bagButtonItemID(button)
@@ -228,18 +267,18 @@ local function isFrameVisible(f)
     return false
 end
 
-local function collectVisibleBagButtons(wantItemID)
-    local out = {}
+local function buildVisibleBagButtonMap()
+    local map = {}
     local seen = {}
     local function inspectButton(btn)
         if type(btn) ~= "table" or seen[btn] then return end
         if not isFrameVisible(btn) then return end
         seen[btn] = true
-        if wantItemID == nil then
-            out[#out + 1] = btn
-        else
-            local id = bagButtonItemID(btn)
-            if id == wantItemID then out[#out + 1] = btn end
+        local id = bagButtonItemID(btn)
+        if id then
+            local list = map[id]
+            if not list then list = {}; map[id] = list end
+            list[#list + 1] = btn
         end
     end
 
@@ -303,7 +342,7 @@ local function collectVisibleBagButtons(wantItemID)
             end
         end
     end
-    return out
+    return map
 end
 
 function Visuals.GetOpenBagSources()
@@ -320,12 +359,25 @@ function Visuals.GetOpenBagSources()
 end
 
 function Visuals.IsAnyBagOpen()
-    return #Visuals.GetOpenBagSources() > 0
+    if isFrameVisible(_G.ContainerFrameCombinedBags) then return true end
+    local maxFrames = tonumber(_G.NUM_CONTAINER_FRAMES) or 13
+    for i = 1, maxFrames do
+        local cf = _G["ContainerFrame" .. i]
+        if isFrameVisible(cf) then return true end
+    end
+    if isFrameVisible(_G.ElvUI_ContainerFrame) then return true end
+    if isFrameVisible(_G.BagnonInventoryFrame1) then return true end
+    return false
 end
 
 function Visuals.FindBagItemButtons(itemID)
-    if type(itemID) ~= "number" then return {} end
-    return collectVisibleBagButtons(itemID)
+    if type(itemID) ~= "number" then return EMPTY_LIST end
+    local now = (type(GetTime) == "function") and GetTime() or 0
+    if not bagButtonCache or (now - bagButtonCacheAt) > 0.5 then
+        bagButtonCache = buildVisibleBagButtonMap()
+        bagButtonCacheAt = now
+    end
+    return bagButtonCache[itemID] or EMPTY_LIST
 end
 
 -- ---------------------------------------------------------------------------
@@ -483,6 +535,7 @@ function Visuals.DashRing(parent, radius, thickness, rgb, segments)
     end)
     local chord = (2 * math.pi * radius / segments) * 0.72
     local thick = math.max(2, math.floor(thickness))
+    local textures = {}
     for i = 1, segments do
         local a = (i / segments) * math.pi * 2
         local dx, dy = math.cos(a), math.sin(a)
@@ -493,7 +546,9 @@ function Visuals.DashRing(parent, radius, thickness, rgb, segments)
         tex:SetHeight(thick)
         tex:SetPoint("CENTER", group, "CENTER", dx * radius, dy * radius)
         pcall(function() tex:SetRotation(a + math.pi / 2) end)
+        textures[i] = tex
     end
+    group._cfaTextures = textures
     return group
 end
 
@@ -507,6 +562,7 @@ local function makeBorderOverlay(btn, rgb, width)
     local w = math.max(2, math.floor(width or 12))
     local bw = btn:GetWidth()
     local bh = btn:GetHeight()
+    local textures = {}
     local function edge(point, horiz)
         local tex = f:CreateTexture(nil, "OVERLAY")
         tex:SetTexture("Interface\\Buttons\\WHITE8X8")
@@ -522,11 +578,13 @@ local function makeBorderOverlay(btn, rgb, width)
             tex:SetPoint("TOP" .. point, f, "TOP" .. point, 0, 0)
             tex:SetPoint("BOTTOM" .. point, f, "BOTTOM" .. point, 0, 0)
         end
+        textures[#textures + 1] = tex
     end
     edge("TOP", true)
     edge("BOTTOM", true)
     edge("LEFT", false)
     edge("RIGHT", false)
+    f._cfaTextures = textures
     return f
 end
 
@@ -544,6 +602,7 @@ local function makeTextureOverlay(btn, textureFile, rgb)
     texture:SetTexture("Interface\\AddOns\\" .. addonName .. "\\Textures\\" .. textureFile)
     texture:SetBlendMode("ADD")
     texture:SetVertexColor(rgb[1], rgb[2], rgb[3], 1)
+    f._cfaTextures = { texture }
 
     local pulse = f:CreateAnimationGroup()
     pulse:SetLooping("BOUNCE")
@@ -589,17 +648,62 @@ local function makeZoomOverlay(btn, rgb, width)
     return f
 end
 
+local function recolorOverlay(overlay, rgb)
+    if overlay and overlay._cfaTextures then
+        local r, g, b = rgb[1], rgb[2], rgb[3]
+        for _, tex in ipairs(overlay._cfaTextures) do
+            tex:SetVertexColor(r, g, b, 1)
+        end
+    end
+end
+
 function Visuals.Clear()
-    for btn, overlay in pairs(highlighted) do
+    for _, overlay in pairs(highlighted) do
         if overlay.pulse then overlay.pulse:Stop() end
         overlay:Hide()
-        overlay:SetParent(nil)
     end
-    highlighted = {}
+    wipe(highlighted)
     shownSignature = nil
 end
 
+local function acquireButtonOverlay(btn, mode, rgb, width)
+    local pool = buttonOverlayPool[btn]
+    if not pool then
+        pool = {}
+        buttonOverlayPool[btn] = pool
+    end
+    local entry = pool[mode]
+    local wantW = (mode == "flame" or mode == "lightning") and 0 or width
+    if entry and entry.width == wantW and entry.frame then
+        recolorOverlay(entry.frame, rgb)
+        entry.frame:Show()
+        if entry.frame.pulse then entry.frame.pulse:Play() end
+        return entry.frame
+    end
+    -- Width changed or first time on this button/mode: hide previous if any and create once
+    if entry and entry.frame then
+        if entry.frame.pulse then entry.frame.pulse:Stop() end
+        entry.frame:Hide()
+    end
+    local overlay
+    if mode == "border" then
+        overlay = makeBorderOverlay(btn, rgb, width)
+    elseif mode == "flame" then
+        overlay = makeTextureOverlay(btn, "Highlight_Flame.tga", rgb)
+    elseif mode == "lightning" then
+        overlay = makeTextureOverlay(btn, "Highlight_Lightning.tga", rgb)
+    elseif mode == "zoom" then
+        overlay = makeZoomOverlay(btn, rgb, width)
+    else
+        local btnW = btn:GetWidth()
+        overlay = Visuals.DashRing(btn, btnW * 0.68, math.max(3, math.min(24, width * 0.5 + 3)), rgb, 14)
+    end
+    pool[mode] = { frame = overlay, width = wantW }
+    return overlay
+end
+
 local function showButtons(buttons, reason)
+    if not buttons or #buttons == 0 then return end
     local rgb
     if addon.db.useSingleColor then
         rgb = Visuals.PresetColors[addon.db.singleColorIndex or 2]
@@ -610,31 +714,14 @@ local function showButtons(buttons, reason)
     local width = math.max(0, math.min(60, tonumber(addon.db.borderWidth) or 12))
     for _, btn in ipairs(buttons) do
         if not highlighted[btn] then
-            local overlay
-            if mode == "border" then
-                overlay = makeBorderOverlay(btn, rgb, width)
-            elseif mode == "flame" then
-                overlay = makeTextureOverlay(btn, "Highlight_Flame.tga", rgb)
-            elseif mode == "lightning" then
-                overlay = makeTextureOverlay(btn, "Highlight_Lightning.tga", rgb)
-            elseif mode == "zoom" then
-                overlay = makeZoomOverlay(btn, rgb, width)
-            else
-                local btnW = btn:GetWidth()
-                overlay = Visuals.DashRing(btn, btnW * 0.68, math.max(3, math.min(24, width * 0.5 + 3)), rgb, 14)
-            end
-            highlighted[btn] = overlay
+            highlighted[btn] = acquireButtonOverlay(btn, mode, rgb, width)
         end
     end
 end
 
 local function showSpell(spellID, reason)
     if not spellID then return end
-    local buttons = {}
-    for _, btn in ipairs(buttonMap) do
-        if spellMatches(buttonSpellID(btn), spellID) then buttons[#buttons + 1] = btn end
-    end
-    showButtons(buttons, reason)
+    showButtons(Visuals.FindButtons(spellID), reason)
 end
 
 local function showItem(itemID, reason, highlightBags)
