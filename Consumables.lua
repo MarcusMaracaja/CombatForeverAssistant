@@ -227,9 +227,12 @@ local knownFoodSpellIDs = {}
 local knownDrinkSpellIDs = {}
 
 -- Beliefs populated on UNIT_SPELLCAST_SUCCEEDED / SENT so glow stops immediately
+local POST_COMBAT_WINDOW = 20 -- seconds after leaving combat when HP/Mana are secret (nil)
 local state = {
     eatingBeliefUntil = 0,
     drinkingBeliefUntil = 0,
+    postCombatFoodUntil = 0,
+    postCombatDrinkUntil = 0,
     usedItemUntil = {},      -- [itemID] = timestamp
     usedCategoryUntil = {},  -- [category] = timestamp
     lastCastByID = {},       -- [spellID] = timestamp
@@ -1479,8 +1482,19 @@ function Consumables.GetSuggestions()
 
     -- 1) Food (HP) and Drink/Water (Mana) — out of combat, standing still, not mounted.
     --    Both can glow simultaneously!
+    --    When HP/Mana are Blizzard secret values (nil) even out of combat, fall back to:
+    --      (a) post-combat reminder window (PLAYER_REGEN_ENABLED, 20s), and
+    --      (b) open bag out of combat while standing still.
     if not env.inCombat and not env.moving and not env.mounted then
-        if cfg.foodEnabled and not eating and env.hpPct ~= nil and env.hpPct < (cfg.foodThreshold or 50) then
+        local tNow = now()
+        local foodNeeded
+        if env.hpPct ~= nil then
+            foodNeeded = env.hpPct < (cfg.foodThreshold or 50)
+        else
+            foodNeeded = (tNow < state.postCombatFoodUntil) or env.bagOpen
+        end
+
+        if cfg.foodEnabled and not eating and foodNeeded then
             local bestFood
             for _, entry in pairs(owned) do
                 if entry.meta and entry.meta.isFood and itemIsEligibleToShow(entry, env.bagOpen) then
@@ -1492,8 +1506,14 @@ function Consumables.GetSuggestions()
             if bestFood then addSuggestion(bestFood.itemID, "Defensive", "food") end
         end
 
-        if cfg.drinkEnabled and env.hasMana and not drinking
-            and env.manaPct ~= nil and env.manaPct < (cfg.drinkThreshold or 50) then
+        local drinkNeeded
+        if env.manaPct ~= nil then
+            drinkNeeded = env.manaPct < (cfg.drinkThreshold or 50)
+        else
+            drinkNeeded = (tNow < state.postCombatDrinkUntil) or env.bagOpen
+        end
+
+        if cfg.drinkEnabled and env.hasMana and not drinking and drinkNeeded then
             local bestDrink
             for _, entry in pairs(owned) do
                 if entry.meta and entry.meta.isDrink and itemIsEligibleToShow(entry, env.bagOpen) then
@@ -1594,6 +1614,7 @@ tracker:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
 tracker:RegisterEvent("PLAYER_ENTERING_WORLD")
 tracker:RegisterEvent("PLAYER_DEAD")
 tracker:RegisterEvent("PLAYER_REGEN_DISABLED")
+tracker:RegisterEvent("PLAYER_REGEN_ENABLED")
 tracker:RegisterUnitEvent("UNIT_AURA", "player")
 tracker:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
 tracker:RegisterUnitEvent("UNIT_SPELLCAST_SENT", "player")
@@ -1609,6 +1630,8 @@ tracker:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4)
         invalidateAuraCache()
         state.eatingBeliefUntil = 0
         state.drinkingBeliefUntil = 0
+        state.postCombatFoodUntil = 0
+        state.postCombatDrinkUntil = 0
         wipe(state.usedItemUntil)
         wipe(state.usedCategoryUntil)
         wipe(state.lastCastByID)
@@ -1617,6 +1640,12 @@ tracker:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4)
         invalidateAuraCache()
         state.eatingBeliefUntil = 0
         state.drinkingBeliefUntil = 0
+        state.postCombatFoodUntil = 0
+        state.postCombatDrinkUntil = 0
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        local untilT = now() + POST_COMBAT_WINDOW
+        state.postCombatFoodUntil = untilT
+        state.postCombatDrinkUntil = untilT
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" or event == "UNIT_SPELLCAST_SENT" then
         local unit = arg1
         if unit ~= "player" then return end
@@ -1634,13 +1663,21 @@ tracker:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4)
 
         if spellID and (FOOD_AURA_IDS[spellID] or HYBRID_FOOD_DRINK_IDS[spellID] or knownFoodSpellIDs[spellID]) then
             state.eatingBeliefUntil = t + 3
+            state.postCombatFoodUntil = 0
         end
         if spellID and (DRINK_AURA_IDS[spellID] or HYBRID_FOOD_DRINK_IDS[spellID] or knownDrinkSpellIDs[spellID]) then
             state.drinkingBeliefUntil = t + 3
+            state.postCombatDrinkUntil = 0
         end
         if normName and normName ~= "" then
-            if nameLooksLikeFood(normName) then state.eatingBeliefUntil = t + 3 end
-            if nameLooksLikeDrink(normName) then state.drinkingBeliefUntil = t + 3 end
+            if nameLooksLikeFood(normName) then
+                state.eatingBeliefUntil = t + 3
+                state.postCombatFoodUntil = 0
+            end
+            if nameLooksLikeDrink(normName) then
+                state.drinkingBeliefUntil = t + 3
+                state.postCombatDrinkUntil = 0
+            end
         end
 
         -- Match against owned items' spellIDs to stop their glow immediately & clear triggered rules
@@ -1649,8 +1686,14 @@ tracker:SetScript("OnEvent", function(_, event, arg1, arg2, arg3, arg4)
             for itemID, entry in pairs(owned) do
                 if entry.meta and entry.meta.spellID == spellID then
                     state.usedItemUntil[itemID] = t + 1.5
-                    if entry.meta.isFood then state.eatingBeliefUntil = t + 3 end
-                    if entry.meta.isDrink then state.drinkingBeliefUntil = t + 3 end
+                    if entry.meta.isFood then
+                        state.eatingBeliefUntil = t + 3
+                        state.postCombatFoodUntil = 0
+                    end
+                    if entry.meta.isDrink then
+                        state.drinkingBeliefUntil = t + 3
+                        state.postCombatDrinkUntil = 0
+                    end
                     if entry.meta.longBuff then
                         state.usedCategoryUntil[entry.meta.longBuff.category] = t + math.min(entry.meta.longBuff.duration or 300, 3600)
                     end
@@ -1697,9 +1740,13 @@ function Consumables.DebugDump()
         env.hpPct and string.format("%.1f%%", env.hpPct) or "nil",
         env.manaPct and string.format("%.1f%%", env.manaPct) or "nil",
         tostring(env.hasMana), playerLevel()))
-    P(string.format("eating=%s drinking=%s aurasReadable=%s swimming=%s breath=%s lastCast=%s",
+    local tNow = now()
+    local pcFood = math.max(0, state.postCombatFoodUntil - tNow)
+    local pcDrink = math.max(0, state.postCombatDrinkUntil - tNow)
+    P(string.format("eating=%s drinking=%s aurasReadable=%s swimming=%s breath=%s postCombat=F:%.1fs/D:%.1fs lastCast=%s",
         tostring(eating), tostring(drinking), tostring(auraReadable),
         tostring(env.swimming), env.breathPct and string.format("%.1f%%", env.breathPct) or "nil",
+        pcFood, pcDrink,
         tostring(state.lastCastSummary)))
     P(string.format("config: food=%s(<%d%%) drink=%s(<%d%%) healPot=%s(<%d%%) manaPot=%s(<%d%%) bonus=%s(elix=%s,scroll=%s) customRules=%d",
         tostring(cfg.foodEnabled), cfg.foodThreshold or 50,

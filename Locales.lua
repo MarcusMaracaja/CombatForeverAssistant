@@ -261,7 +261,7 @@ local strings = {
     ["cons_section_food_drink"] = { en = "Food & Water (out of combat, standing still)", pt = "Comida e Água (fora de combate, parado)" },
     ["cons_food_enable"]        = { en = "Recommend Food (HP)", pt = "Recomendar Comida (Vida)" },
     ["cons_drink_enable"]       = { en = "Recommend Water (Mana)", pt = "Recomendar Água (Mana)" },
-    ["cons_food_drink_hint"]    = { en = "Open bag: highlights the best usable item in the bag (and on the bar if bound). Closed bag: highlights on the bar. Food and water can glow together and stop while eating/drinking.", pt = "Bolsa aberta: destaca o melhor item usável na bolsa (e na barra se estiver nela). Bolsa fechada: destaca na barra. Comida e água podem brilhar juntas e param ao comer/beber." },
+    ["cons_food_drink_hint"]    = { en = "Open bag: highlights the best usable item in the bag (and on the bar if bound). Closed bag: highlights on the bar. When the client hides HP/Mana as secret values, Food/Water trigger after combat (20s) and whenever the bag is open while standing still.", pt = "Bolsa aberta: destaca o melhor item usável na bolsa (e na barra se estiver nela). Bolsa fechada: destaca na barra. Quando o cliente oculta Vida/Mana como valores secretos, Comida/Água acendem após o combate (20s) e ao abrir a bolsa parado." },
     ["cons_section_combat_pots"] = { en = "Combat Potions (in combat — auto-picks best)", pt = "Poções de Combate (em combate — escolhe a melhor)" },
     ["cons_heal_pot_enable"]    = { en = "Recommend Healing Potion", pt = "Recomendar Poção de Vida" },
     ["cons_mana_pot_enable"]    = { en = "Recommend Mana Potion", pt = "Recomendar Poção de Mana" },
