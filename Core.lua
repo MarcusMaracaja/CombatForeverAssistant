@@ -133,6 +133,7 @@ local TICK_IDLE = 0.35
 local elapsed = 0
 local lastErrorPrint = 0
 local playerUnavailable = false
+local playerInCombat = false
 
 local function playerCanRun()
     return UnitExists("player") and not UnitIsDeadOrGhost("player")
@@ -227,12 +228,17 @@ frame:SetScript("OnEvent", function(_, event, arg1, ...)
         addon:InvalidateSpecTalentCache()
     elseif event == "PLAYER_DEAD" then
         playerUnavailable = true
+        playerInCombat = false
         clearPlayerSuggestions()
     elseif event == "SPELLS_CHANGED" or event == "UPDATE_BINDINGS"
-        or event == "ACTIONBAR_SLOT_CHANGED" or event == "UPDATE_SHAPESHIFT_FORM" then
+        or event == "ACTIONBAR_SLOT_CHANGED" or event == "ACTIONBAR_PAGE_CHANGED"
+        or event == "UPDATE_BONUS_ACTIONBAR" or event == "UPDATE_SHAPESHIFT_FORM"
+        or event == "UPDATE_SHAPESHIFT_FORMS" then
         if addon.Visuals then addon.Visuals.RefreshMap() end
     elseif event == "PLAYER_REGEN_DISABLED" then
-        -- entering combat: nothing special yet
+        playerInCombat = true
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        playerInCombat = false
     elseif event == "START_AUTOREPEAT_SPELL" then
         addon.AutoShoot = true
     elseif event == "STOP_AUTOREPEAT_SPELL" then
@@ -245,7 +251,12 @@ frame:RegisterEvent("PLAYER_ENTERING_WORLD")
 frame:RegisterEvent("SPELLS_CHANGED")
 frame:RegisterEvent("UPDATE_BINDINGS")
 frame:RegisterEvent("ACTIONBAR_SLOT_CHANGED")
+frame:RegisterEvent("ACTIONBAR_PAGE_CHANGED")
+frame:RegisterEvent("UPDATE_BONUS_ACTIONBAR")
 frame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+frame:RegisterEvent("UPDATE_SHAPESHIFT_FORMS")
+frame:RegisterEvent("PLAYER_REGEN_DISABLED")
+frame:RegisterEvent("PLAYER_REGEN_ENABLED")
 frame:RegisterEvent("PLAYER_DEAD")
 frame:RegisterEvent("START_AUTOREPEAT_SPELL")
 frame:RegisterEvent("STOP_AUTOREPEAT_SPELL")
@@ -346,7 +357,7 @@ end
 
 frame:SetScript("OnUpdate", function(_, delta)
     elapsed = elapsed + delta
-    local tickInterval = (UnitAffectingCombat and UnitAffectingCombat("player")) and TICK_COMBAT or TICK_IDLE
+    local tickInterval = playerInCombat and TICK_COMBAT or TICK_IDLE
     if elapsed < tickInterval then return end
     elapsed = 0
     if not playerCanRun() then

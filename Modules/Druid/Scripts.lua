@@ -210,7 +210,8 @@ function Druid:BuildEnv(specKey)
         targetInterruptible = targetCast,
         lostAggro = lostAggro,
         hasTargetTarget = hasEnemy and UnitExists("targettarget") and true or false,
-        targetTargetIsPlayer = hasEnemy and UnitExists("targettarget") and addon.UnitIsSame("targettarget", "player") or false,
+        targetTargetIsPlayer = hasEnemy and UnitExists("targettarget") and addon.UnitIsSame("targettarget", "player") or
+            false,
         healUnit = healUnit,
         healHealth = healHealth,
         emergencyHealing = specKey == "REST" and healHealth ~= nil and healHealth <= 35,
@@ -220,12 +221,15 @@ function Druid:BuildEnv(specKey)
         targetDebuffRake = hasEnemy and isCat and Druid.IsTargetDebuffActive(1822, "rake", true) or false,
         targetDebuffRip = hasEnemy and isCat and Druid.IsTargetDebuffActive(1079, "rip", true) or false,
         targetDebuffMoonfire = hasEnemy and isCaster and Druid.IsTargetDebuffActive(8921, "moonfire", true) or false,
-        targetDebuffInsectSwarm = hasEnemy and isCaster and Druid.IsTargetDebuffActive(5570, "insect_swarm", true) or false,
+        targetDebuffInsectSwarm = hasEnemy and isCaster and Druid.IsTargetDebuffActive(5570, "insect_swarm", true) or
+            false,
         targetDebuffFaerieFire = hasEnemy and isCaster and Druid.IsTargetDebuffActive(770, "faerie_fire", false) or false,
-        targetDebuffFaerieFireFeral = hasEnemy and (isCat or isBear) and Druid.IsTargetDebuffActive(16857, "faerie_fire_feral", false) or false,
+        targetDebuffFaerieFireFeral = hasEnemy and (isCat or isBear) and
+            Druid.IsTargetDebuffActive(16857, "faerie_fire_feral", false) or false,
         targetDebuffMangleCat = hasEnemy and isCat and Druid.IsTargetDebuffActive(33876, "mangle_cat", false) or false,
         targetDebuffMangleBear = hasEnemy and isBear and Druid.IsTargetDebuffActive(33878, "mangle_bear", false) or false,
-        targetDebuffDemoralizingRoar = hasEnemy and isBear and Druid.IsTargetDebuffActive(99, "demoralizing_roar", false) or false,
+        targetDebuffDemoralizingRoar = hasEnemy and isBear and Druid.IsTargetDebuffActive(99, "demoralizing_roar", false) or
+            false,
 
         -- Player combat buffs
         tigerFuryActive = isCat and Druid.IsPlayerBuffActive(5217, "tiger_fury", "TigersFury") or false,
@@ -368,10 +372,11 @@ function Druid:DebugRotation()
     local specKey, source = self:DetectSpec()
     local env = self:BuildEnv(specKey)
     print(string.format(
-        "|cff44ddff[CFA dbg]|r Druid spec=%s (%s) | forma=%s | inimigo=%s | combate=%s | mana=%s | energia=%s | raiva=%s | cp=%s | aoe=%s",
+        "|cff44ddff[CFA dbg]|r Druid spec=%s (%s) | forma=%s | inimigo=%s | combate=%s | mana=%s | energia=%s | raiva=%s | cp=%s | enemies=%s aoe=%s | lostAggro=%s | castInt=%s",
         tostring(specKey), tostring(source), tostring(env.form), tostring(env.hasActiveEnemy),
         tostring(env.inCombat), tostring(env.manaPct), tostring(env.energy),
-        tostring(env.rage), tostring(env.combo), tostring(env.isAoE)))
+        tostring(env.rage), tostring(env.combo), tostring(env.enemyCount), tostring(env.isAoE),
+        tostring(env.lostAggro), tostring(env.targetInterruptible)))
     local nodes = self:GetEffectiveNodes(specKey) or {}
     for _, node in ipairs(nodes) do
         local condOK = node.enabled ~= false and addon.NodeConditionPass(self, env, node, true)

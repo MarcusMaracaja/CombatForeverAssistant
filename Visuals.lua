@@ -182,16 +182,27 @@ local function ensureActionMaps()
 end
 
 local EMPTY_LIST = {}
+local lastMissRefreshAt = 0
 
 -- public: buttons on the action bars bound to this spell (id or family name)
 function Visuals.FindButtons(spellID)
     if not spellID then return EMPTY_LIST end
     ensureActionMaps()
     local byBase = spellBaseName(spellID)
-    if byBase and spellBaseButtonMap[byBase] then
-        return spellBaseButtonMap[byBase]
+    local res = (byBase and spellBaseButtonMap[byBase]) or spellButtonMap[spellID]
+    if not res then
+        -- Self-heal stale stance/page cache at most once per second if a suggested spell wasn't found
+        local now = (type(GetTime) == "function") and GetTime() or 0
+        if (now - lastMissRefreshAt) > 1.0 then
+            lastMissRefreshAt = now
+            spellButtonMap = nil
+            spellBaseButtonMap = nil
+            itemButtonMap = nil
+            ensureActionMaps()
+            res = (byBase and spellBaseButtonMap[byBase]) or spellButtonMap[spellID]
+        end
     end
-    return spellButtonMap[spellID] or EMPTY_LIST
+    return res or EMPTY_LIST
 end
 
 function Visuals.FindItemButtons(itemID)
