@@ -9,7 +9,9 @@ local _, addon = ...
 local Druid = addon.modules.DRUID
 local L = addon.L
 
-local EXTRA_KEYS = { mark = true, thorns = true }
+local EXTRA_KEYS = { mark = true, thorns = true, aquatic = true }
+local lastLandForm = nil
+local preAquaticForm = nil
 
 -- ---------------------------------------------------------------------------
 -- Event tracker (beliefs & talent cache invalidation)
@@ -28,6 +30,7 @@ tracker:SetScript("OnEvent", function(_, event, ...)
         Druid.OnTargetChanged()
     elseif event == "PLAYER_ENTERING_WORLD" or event == "PLAYER_DEAD" then
         Druid.ClearAllBeliefs()
+        preAquaticForm = nil
         addon:InvalidateSpecTalentCache("DRUID")
     elseif event == "SPELLS_CHANGED" or event == "PLAYER_TALENT_UPDATE"
         or event == "TRAIT_CONFIG_UPDATED" then
@@ -293,10 +296,89 @@ function Druid:TryFlash(spellID, color, condition, name, env, opts, asAdditional
 end
 
 -- ---------------------------------------------------------------------------
+-- Automatic Aquatic Form (out of combat while swimming) + return to previous
+-- land form upon leaving the water.
+-- ---------------------------------------------------------------------------
+local function playerIsSwimming()
+    if type(IsSwimming) == "function" then
+        local ok, v = pcall(IsSwimming)
+        if ok and addon.SafeBoolean(v, false) == true then return true end
+    end
+    return false
+end
+
+local function formRestoreSpellID(formKey)
+    if formKey == "BEAR" then
+        return (addon.Compat and addon.Compat.HighestKnownSpellID and addon.Compat.HighestKnownSpellID(5487)) or 5487
+    elseif formKey == "CAT" then
+        return 768
+    elseif formKey == "MOONKIN" then
+        return 24858
+    end
+    -- HUMANOID / nil: clicking Aquatic Form (1066) again cancels Aquatic Form
+    return 1066
+end
+
+local function aquaticFormSuggestion(env)
+    if not Druid:IsExtraSuggestionEnabled("aquatic") then return nil end
+    local swimming = playerIsSwimming()
+    local form = env.form
+
+    -- Track the last non-aquatic form while on land
+    if not swimming and form ~= "AQUATIC" then
+        if form == "BEAR" or form == "CAT" or form == "MOONKIN" or form == "HUMANOID" then
+            lastLandForm = form
+        end
+        preAquaticForm = nil
+        return nil
+    end
+
+    -- Never suggest Aquatic Form / land-form switch while in combat
+    if env.inCombat then return nil end
+
+    -- Swimming out of combat: suggest Aquatic Form (1066) and remember previous form
+    if swimming then
+        if form == "AQUATIC" then return nil end
+        local aquaticID = addon.Compat and addon.Compat.HighestKnownSpellID
+            and addon.Compat.HighestKnownSpellID(1066)
+        if not aquaticID then return nil end
+        local name = addon.SpellName(aquaticID)
+        if name and addon.CheckCastable({
+                SpellID = aquaticID, SpellName = name, EnemyTargetNeeded = false,
+                Unit = "player", NoRangeCheck = true,
+            }) then
+            if preAquaticForm == nil then
+                preAquaticForm = lastLandForm or form
+            end
+            return { spellID = aquaticID, color = "Utility" }
+        end
+        return nil
+    end
+
+    -- Back on land while still in Aquatic Form: restore the previous form
+    if not swimming and form == "AQUATIC" then
+        local restoreID = formRestoreSpellID(preAquaticForm)
+        local knownID = (addon.Compat and addon.Compat.HighestKnownSpellID
+            and addon.Compat.HighestKnownSpellID(restoreID)) or restoreID
+        local name = knownID and addon.SpellName(knownID)
+        if knownID and name and addon.CheckCastable({
+                SpellID = knownID, SpellName = name, EnemyTargetNeeded = false,
+                Unit = "player", NoRangeCheck = true,
+            }) then
+            return { spellID = knownID, color = "Utility" }
+        end
+    end
+
+    return nil
+end
+
+-- ---------------------------------------------------------------------------
 -- Extra buff suggestions (Mark of the Wild / Thorns) — never forces dropping
 -- Bear/Cat form while in combat.
 -- ---------------------------------------------------------------------------
 local function nextExtraSuggestion(env)
+    local aquatic = aquaticFormSuggestion(env)
+    if aquatic then return aquatic end
     if env.inCombat and (env.form == "CAT" or env.form == "BEAR") then
         return nil
     end
@@ -391,8 +473,9 @@ end
 -- ---------------------------------------------------------------------------
 if addon.RotationEditor and addon.RotationEditor.Attach then
     local EXTRAS = {
-        { key = "mark",   labelKey = "druid_extra_mark",   fallback = "Mark of the Wild" },
-        { key = "thorns", labelKey = "druid_extra_thorns", fallback = "Thorns" },
+        { key = "mark",    labelKey = "druid_extra_mark",    fallback = "Mark of the Wild" },
+        { key = "thorns",  labelKey = "druid_extra_thorns",  fallback = "Thorns" },
+        { key = "aquatic", labelKey = "druid_extra_aquatic", fallback = "Aquatic Form (swimming)" },
     }
     local function renderExtraTab(scrollChild, mod, rows)
         local y = -4

@@ -36,6 +36,7 @@ local BUTTON_PATTERNS = {
     "MultiBarLeftButton%d+",
     "PetActionButton%d+",
     "ShapeshiftButton%d+",
+    "StanceButton%d+",
 }
 
 local buttonMap = {}
@@ -107,7 +108,24 @@ local function ensureMap()
     if mapDirty then Visuals.BuildMap() end
 end
 
+local function stanceButtonSpellID(f)
+    if not f or type(f.GetName) ~= "function" then return nil end
+    local name = f:GetName()
+    if type(name) ~= "string" then return nil end
+    local idx = name:match("^StanceButton(%d+)$") or name:match("^ShapeshiftButton(%d+)$")
+    if not idx or type(GetShapeshiftFormInfo) ~= "function" then return nil end
+    local ok, icon, _, _, spellID = pcall(GetShapeshiftFormInfo, tonumber(idx))
+    if not ok then return nil end
+    if type(icon) == "table" then spellID = icon.spellID or icon.spellId end
+    if type(spellID) == "number" and not (_G.issecretvalue and issecretvalue(spellID)) then
+        return spellID
+    end
+    return nil
+end
+
 local function buttonAction(f)
+    local stanceSpell = stanceButtonSpellID(f)
+    if stanceSpell then return "spell", stanceSpell end
     local slot = slotSpellID(f)
     if not slot or type(GetActionInfo) ~= "function" then return nil end
     local ok, actionType, id = pcall(GetActionInfo, slot)

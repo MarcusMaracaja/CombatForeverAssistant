@@ -127,6 +127,7 @@ local strings = {
     ["druid_extra_hint"]              = { en = "Enabled buffs are suggested before the normal rotation until detected as active.", pt = "Os buffs ativados são sugeridos antes da rotação até serem reconhecidos como ativos." },
     ["druid_extra_mark"]              = { en = "Mark of the Wild / Gift of the Wild", pt = "Marca do Indomado / Dom da Natureza" },
     ["druid_extra_thorns"]            = { en = "Thorns", pt = "Espinhos" },
+    ["druid_extra_aquatic"]           = { en = "Aquatic Form (auto while swimming)", pt = "Forma Aquática (automática ao nadar)" },
     ["priest_tab"]                    = { en = "Priest", pt = "Sacerdote" },
     ["priest_enabled"]                = { en = "Enable Priest recommendations", pt = "Ativar recomendações do Sacerdote" },
     ["priest_spec_header"]            = { en = "Talent specialization", pt = "Especialização de talentos" },

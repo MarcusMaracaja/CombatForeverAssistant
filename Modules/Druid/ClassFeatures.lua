@@ -41,6 +41,9 @@ if addon.Compat and type(addon.Compat.RegisterSpellFamilies) == "function" then
         { 99, 1735, 9490, 9747, 9898, 26998 },                       -- Demoralizing Roar
         { 5211, 6798, 8983 },                                        -- Bash
         { 5487, 9634 },                                              -- Bear / Dire Bear Form
+        { 768 },                                                     -- Cat Form
+        { 1066 },                                                    -- Aquatic Form
+        { 24858, 24907 },                                            -- Moonkin Form
         { 8936, 8938, 8939, 8940, 8941, 9750, 9856, 9857, 9858, 26980 }, -- Regrowth
         { 774, 1058, 1430, 2090, 2091, 3627, 8910, 9839, 9840, 9841, 25299, 26981 }, -- Rejuvenation
         { 5185, 5186, 5187, 5188, 5189, 6778, 8903, 9758, 9888, 9889, 25297, 26978, 26979 }, -- Healing Touch
@@ -55,10 +58,19 @@ local lastKnownForm = "HUMANOID"
 
 local FORM_BY_SPELL_ID = {
     [768]   = "CAT",
+    [1066]  = "AQUATIC",
     [5487]  = "BEAR",
     [9634]  = "BEAR",
     [24858] = "MOONKIN",
     [24907] = "MOONKIN",
+}
+
+local FORM_BY_SHAPESHIFT_ID = {
+    [1]  = "CAT",
+    [4]  = "AQUATIC",
+    [5]  = "BEAR",
+    [8]  = "BEAR",
+    [31] = "MOONKIN",
 }
 
 function Druid.ActiveForm()
@@ -75,7 +87,7 @@ function Druid.ActiveForm()
         end
     end
 
-    -- 2) Shapeshift API (distinguishes Moonkin vs Humanoid when powerType == 0)
+    -- 2) Shapeshift API (distinguishes Aquatic / Moonkin / Humanoid when powerType == 0)
     if type(GetShapeshiftFormID) == "function" then
         local ok, fid = pcall(GetShapeshiftFormID)
         local formID = ok and addon.SafeNumber(fid, nil) or nil
@@ -84,7 +96,7 @@ function Druid.ActiveForm()
                 lastKnownForm = "HUMANOID"
                 return "HUMANOID"
             end
-            local mapped = FORM_BY_SPELL_ID[formID]
+            local mapped = FORM_BY_SHAPESHIFT_ID[formID] or FORM_BY_SPELL_ID[formID]
             if mapped then
                 lastKnownForm = mapped
                 return mapped
@@ -121,6 +133,10 @@ function Druid.ActiveForm()
     end
 
     -- 3) Aura fallback (works out of combat)
+    if addon.HasBuff("player", 1066) then
+        lastKnownForm = "AQUATIC"
+        return "AQUATIC"
+    end
     if addon.HasBuff("player", 24858) or addon.HasBuff("player", 24907) then
         lastKnownForm = "MOONKIN"
         return "MOONKIN"
